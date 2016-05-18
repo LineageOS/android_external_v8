@@ -78,11 +78,11 @@ LOCAL_SRC_FILES := \
 	src/compiler/instruction.cc \
 	src/compiler/instruction-scheduler.cc \
 	src/compiler/instruction-selector.cc \
-	src/compiler/interpreter-assembler.cc \
+	src/compiler/int64-lowering.cc \
 	src/compiler/js-builtin-reducer.cc \
 	src/compiler/js-call-reducer.cc \
-	src/compiler/js-context-relaxation.cc \
 	src/compiler/js-context-specialization.cc \
+	src/compiler/js-create-lowering.cc \
 	src/compiler/js-frame-specialization.cc \
 	src/compiler/js-generic-lowering.cc \
 	src/compiler/js-global-object-specialization.cc \
@@ -189,6 +189,7 @@ LOCAL_SRC_FILES := \
 	src/extensions/trigger-failure-extension.cc \
 	src/factory.cc \
 	src/fast-dtoa.cc \
+	src/field-type.cc \
 	src/fixed-dtoa.cc \
 	src/flags.cc \
 	src/frames.cc \
@@ -207,6 +208,7 @@ LOCAL_SRC_FILES := \
 	src/heap/memory-reducer.cc \
 	src/heap/object-stats.cc \
 	src/heap/objects-visiting.cc \
+	src/heap/remembered-set.cc \
 	src/heap/scavenge-job.cc \
 	src/heap/scavenger.cc \
 	src/heap/slots-buffer.cc \
@@ -230,7 +232,11 @@ LOCAL_SRC_FILES := \
 	src/interpreter/bytecodes.cc \
 	src/interpreter/constant-array-builder.cc \
 	src/interpreter/control-flow-builders.cc \
+	src/interpreter/handler-table-builder.cc \
+	src/interpreter/interpreter-assembler.cc \
 	src/interpreter/interpreter.cc \
+	src/interpreter/register-translator.cc \
+	src/interpreter/source-position-table.cc \
 	src/isolate.cc \
 	src/key-accumulator.cc \
 	src/layout-descriptor.cc \
@@ -261,6 +267,7 @@ LOCAL_SRC_FILES := \
 	src/profiler/heap-snapshot-generator.cc \
 	src/profiler/profile-generator.cc \
 	src/profiler/sampler.cc \
+	src/profiler/sampling-heap-profiler.cc \
 	src/profiler/strings-storage.cc \
 	src/property.cc \
 	src/property-descriptor.cc \
@@ -363,8 +370,8 @@ LOCAL_SRC_FILES += \
 v8_local_src_files_arm := \
 	src/arm/assembler-arm.cc \
 	src/arm/builtins-arm.cc \
-	src/arm/code-stubs-arm.cc \
 	src/arm/codegen-arm.cc \
+	src/arm/code-stubs-arm.cc \
 	src/arm/constants-arm.cc \
 	src/arm/cpu-arm.cc \
 	src/arm/deoptimizer-arm.cc \
@@ -421,6 +428,19 @@ v8_local_src_files_arm64 := \
 	src/regexp/arm64/regexp-macro-assembler-arm64.cc
 
 v8_local_src_files_mips := \
+	src/compiler/mips/code-generator-mips.cc \
+	src/compiler/mips/instruction-scheduler-mips.cc \
+	src/compiler/mips/instruction-selector-mips.cc \
+	src/crankshaft/mips/lithium-codegen-mips.cc \
+	src/crankshaft/mips/lithium-gap-resolver-mips.cc \
+	src/crankshaft/mips/lithium-mips.cc \
+	src/debug/mips/debug-mips.cc \
+	src/full-codegen/mips/full-codegen-mips.cc \
+	src/ic/mips/access-compiler-mips.cc \
+	src/ic/mips/handler-compiler-mips.cc \
+	src/ic/mips/ic-compiler-mips.cc \
+	src/ic/mips/ic-mips.cc \
+	src/ic/mips/stub-cache-mips.cc \
 	src/mips/assembler-mips.cc \
 	src/mips/builtins-mips.cc \
 	src/mips/codegen-mips.cc \
@@ -433,21 +453,22 @@ v8_local_src_files_mips := \
 	src/mips/interface-descriptors-mips.cc \
 	src/mips/macro-assembler-mips.cc \
 	src/mips/simulator-mips.cc \
-	src/compiler/mips/code-generator-mips.cc \
-	src/compiler/mips/instruction-scheduler-mips.cc \
-	src/compiler/mips/instruction-selector-mips.cc \
-	src/crankshaft/mips/lithium-codegen-mips.cc \
-	src/crankshaft/mips/lithium-gap-resolver-mips.cc \
-	src/crankshaft/mips/lithium-mips.cc \
-	src/full-codegen/mips/full-codegen-mips.cc \
-	src/debug/mips/debug-mips.cc \
-	src/ic/mips/access-compiler-mips.cc \
-	src/ic/mips/handler-compiler-mips.cc \
-	src/ic/mips/ic-mips.cc \
-	src/ic/mips/ic-compiler-mips.cc \
-	src/ic/mips/stub-cache-mips.cc \
 	src/regexp/mips/regexp-macro-assembler-mips.cc
+
 v8_local_src_files_mips64 := \
+	src/compiler/mips64/code-generator-mips64.cc \
+	src/compiler/mips64/instruction-scheduler-mips64.cc \
+	src/compiler/mips64/instruction-selector-mips64.cc \
+	src/crankshaft/mips64/lithium-codegen-mips64.cc \
+	src/crankshaft/mips64/lithium-gap-resolver-mips64.cc \
+	src/crankshaft/mips64/lithium-mips64.cc \
+	src/debug/mips64/debug-mips64.cc \
+	src/full-codegen/mips64/full-codegen-mips64.cc \
+	src/ic/mips64/access-compiler-mips64.cc \
+	src/ic/mips64/handler-compiler-mips64.cc \
+	src/ic/mips64/ic-compiler-mips64.cc \
+	src/ic/mips64/ic-mips64.cc \
+	src/ic/mips64/stub-cache-mips64.cc \
 	src/mips64/assembler-mips64.cc \
 	src/mips64/builtins-mips64.cc \
 	src/mips64/codegen-mips64.cc \
@@ -460,32 +481,9 @@ v8_local_src_files_mips64 := \
 	src/mips64/interface-descriptors-mips64.cc \
 	src/mips64/macro-assembler-mips64.cc \
 	src/mips64/simulator-mips64.cc \
-	src/compiler/mips64/code-generator-mips64.cc \
-	src/compiler/mips64/instruction-scheduler-mips64.cc \
-	src/compiler/mips64/instruction-selector-mips64.cc \
-	src/crankshaft/mips64/lithium-codegen-mips64.cc \
-	src/crankshaft/mips64/lithium-gap-resolver-mips64.cc \
-	src/crankshaft/mips64/lithium-mips64.cc \
-	src/debug/mips64/debug-mips64.cc \
-	src/full-codegen/mips64/full-codegen-mips64.cc \
-	src/ic/mips64/access-compiler-mips64.cc \
-	src/ic/mips64/handler-compiler-mips64.cc \
-	src/ic/mips64/ic-mips64.cc \
-	src/ic/mips64/ic-compiler-mips64.cc \
-	src/ic/mips64/stub-cache-mips64.cc \
-	src/regexp/mips64/regexp-macro-assembler-mips64.cc \
+	src/regexp/mips64/regexp-macro-assembler-mips64.cc
 
 v8_local_src_files_x86 := \
-	src/ia32/assembler-ia32.cc \
-	src/ia32/builtins-ia32.cc \
-	src/ia32/code-stubs-ia32.cc \
-	src/ia32/codegen-ia32.cc \
-	src/ia32/cpu-ia32.cc \
-	src/ia32/deoptimizer-ia32.cc \
-	src/ia32/disasm-ia32.cc \
-	src/ia32/frames-ia32.cc \
-	src/ia32/interface-descriptors-ia32.cc \
-	src/ia32/macro-assembler-ia32.cc \
 	src/compiler/ia32/code-generator-ia32.cc \
 	src/compiler/ia32/instruction-scheduler-ia32.cc \
 	src/compiler/ia32/instruction-selector-ia32.cc \
@@ -494,12 +492,23 @@ v8_local_src_files_x86 := \
 	src/crankshaft/ia32/lithium-ia32.cc \
 	src/debug/ia32/debug-ia32.cc \
 	src/full-codegen/ia32/full-codegen-ia32.cc \
+	src/ia32/assembler-ia32.cc \
+	src/ia32/builtins-ia32.cc \
+	src/ia32/codegen-ia32.cc \
+	src/ia32/code-stubs-ia32.cc \
+	src/ia32/cpu-ia32.cc \
+	src/ia32/deoptimizer-ia32.cc \
+	src/ia32/disasm-ia32.cc \
+	src/ia32/frames-ia32.cc \
+	src/ia32/interface-descriptors-ia32.cc \
+	src/ia32/macro-assembler-ia32.cc \
 	src/ic/ia32/access-compiler-ia32.cc \
 	src/ic/ia32/handler-compiler-ia32.cc \
-	src/ic/ia32/ic-ia32.cc \
 	src/ic/ia32/ic-compiler-ia32.cc \
+	src/ic/ia32/ic-ia32.cc \
 	src/ic/ia32/stub-cache-ia32.cc \
 	src/regexp/ia32/regexp-macro-assembler-ia32.cc
+
 v8_local_src_files_x86_64 := \
 	src/compiler/x64/code-generator-x64.cc \
 	src/compiler/x64/instruction-scheduler-x64.cc \
@@ -525,6 +534,7 @@ v8_local_src_files_x86_64 := \
 	src/x64/frames-x64.cc \
 	src/x64/interface-descriptors-x64.cc \
 	src/x64/macro-assembler-x64.cc
+
 # Enable DEBUG option.
 ifeq ($(DEBUG_V8),true)
   LOCAL_SRC_FILES += \
@@ -576,7 +586,6 @@ V8_LOCAL_JS_EXPERIMENTAL_LIBRARY_FILES := \
 	src/js/generator.js \
 	src/js/harmony-atomics.js \
 	src/js/harmony-regexp.js \
-	src/js/harmony-reflect.js \
 	src/js/harmony-object-observe.js \
 	src/js/harmony-sharedarraybuffer.js \
 	src/js/harmony-simd.js \

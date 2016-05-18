@@ -343,6 +343,7 @@ class FeedbackNexus {
   FeedbackVectorSlot slot() const { return slot_; }
 
   InlineCacheState ic_state() const { return StateFromFeedback(); }
+  bool IsUninitialized() const { return StateFromFeedback() == UNINITIALIZED; }
   Map* FindFirstMap() const {
     MapHandleList maps;
     ExtractMaps(&maps);
@@ -474,6 +475,9 @@ class KeyedLoadICNexus : public FeedbackNexus {
   void ConfigurePolymorphic(Handle<Name> name, MapHandleList* maps,
                             CodeHandleList* handlers);
 
+  void ConfigureMegamorphicKeyed(IcCheckType property_type);
+
+  IcCheckType GetKeyType() const;
   InlineCacheState StateFromFeedback() const override;
   Name* FindFirstName() const override;
 };
@@ -530,6 +534,7 @@ class KeyedStoreICNexus : public FeedbackNexus {
   void ConfigurePolymorphic(MapHandleList* maps,
                             MapHandleList* transitioned_maps,
                             CodeHandleList* handlers);
+  void ConfigureMegamorphicKeyed(IcCheckType property_type);
 
   KeyedAccessStoreMode GetKeyedAccessStoreMode() const;
   IcCheckType GetKeyType() const;

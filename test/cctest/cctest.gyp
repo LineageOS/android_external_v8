@@ -81,7 +81,6 @@
         'compiler/test-run-jsops.cc',
         'compiler/test-run-machops.cc',
         'compiler/test-run-native-calls.cc',
-        'compiler/test-run-properties.cc',
         'compiler/test-run-stackcheck.cc',
         'compiler/test-run-stubs.cc',
         'compiler/test-run-variables.cc',
@@ -91,6 +90,8 @@
         'expression-type-collector.h',
         'interpreter/test-bytecode-generator.cc',
         'interpreter/test-interpreter.cc',
+        'interpreter/bytecode-expectations-printer.cc',
+        'interpreter/bytecode-expectations-printer.h',
         'gay-fixed.cc',
         'gay-precision.cc',
         'gay-shortest.cc',
@@ -344,15 +345,51 @@
         }
       ],
     },
+    {
+      'target_name': 'generate-bytecode-expectations',
+      'type': 'executable',
+      'dependencies': [
+        '../../tools/gyp/v8.gyp:v8_libplatform',
+      ],
+      'conditions': [
+        ['component=="shared_library"', {
+          # Same as cctest, we need to depend on the underlying static target.
+          'dependencies': ['../../tools/gyp/v8.gyp:v8_maybe_snapshot'],
+        }, {
+          'dependencies': ['../../tools/gyp/v8.gyp:v8'],
+        }],
+      ],
+      'include_dirs+': [
+        '../..',
+      ],
+      'sources': [
+        'interpreter/bytecode-expectations-printer.cc',
+        'interpreter/bytecode-expectations-printer.h',
+        'interpreter/generate-bytecode-expectations.cc',
+      ],
+    },
   ],
   'conditions': [
     ['test_isolation_mode != "noop"', {
       'targets': [
         {
-          'target_name': 'cctest_run',
+          'target_name': 'cctest_exe_run',
           'type': 'none',
           'dependencies': [
             'cctest',
+          ],
+          'includes': [
+            '../../build/isolate.gypi',
+          ],
+          'sources': [
+            'cctest_exe.isolate',
+          ],
+        },
+        {
+          'target_name': 'cctest_run',
+          'type': 'none',
+          'dependencies': [
+            'cctest_exe_run',
           ],
           'includes': [
             '../../build/isolate.gypi',
