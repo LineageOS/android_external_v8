@@ -5,6 +5,7 @@ LOCAL_SRC_FILES := \
 	src/address-map.cc \
 	src/allocation.cc \
 	src/allocation-site-scopes.cc \
+	src/api-arguments.cc \
 	src/api.cc \
 	src/api-experimental.cc \
 	src/api-natives.cc \
@@ -64,10 +65,11 @@ LOCAL_SRC_FILES := \
 	src/compiler/dead-code-elimination.cc \
 	src/compiler/escape-analysis.cc \
 	src/compiler/escape-analysis-reducer.cc \
-	src/compiler/fast-accessor-assembler.cc \
+	src/compiler/escape-analysis-reducer.h \
 	src/compiler/frame.cc \
 	src/compiler/frame-elider.cc \
 	src/compiler/frame-states.cc \
+	src/compiler/frame-states.h \
 	src/compiler/gap-resolver.cc \
 	src/compiler/graph.cc \
 	src/compiler/graph-reducer.cc \
@@ -139,8 +141,8 @@ LOCAL_SRC_FILES := \
 	src/contexts.cc \
 	src/conversions.cc \
 	src/counters.cc \
+	src/crankshaft/compilation-phase.cc \
 	src/crankshaft/hydrogen-bce.cc \
-	src/crankshaft/hydrogen-bch.cc \
 	src/crankshaft/hydrogen-canonicalize.cc \
 	src/crankshaft/hydrogen.cc \
 	src/crankshaft/hydrogen-check-elimination.cc \
@@ -187,7 +189,9 @@ LOCAL_SRC_FILES := \
 	src/extensions/gc-extension.cc \
 	src/extensions/statistics-extension.cc \
 	src/extensions/trigger-failure-extension.cc \
+	src/external-reference-table.cc \
 	src/factory.cc \
+	src/fast-accessor-assembler.cc \
 	src/fast-dtoa.cc \
 	src/field-type.cc \
 	src/fixed-dtoa.cc \
@@ -211,7 +215,6 @@ LOCAL_SRC_FILES := \
 	src/heap/remembered-set.cc \
 	src/heap/scavenge-job.cc \
 	src/heap/scavenger.cc \
-	src/heap/slots-buffer.cc \
 	src/heap/spaces.cc \
 	src/heap/store-buffer.cc \
 	src/i18n.cc \
@@ -235,10 +238,10 @@ LOCAL_SRC_FILES := \
 	src/interpreter/handler-table-builder.cc \
 	src/interpreter/interpreter-assembler.cc \
 	src/interpreter/interpreter.cc \
-	src/interpreter/register-translator.cc \
+	src/interpreter/interpreter-intrinsics.cc \
 	src/interpreter/source-position-table.cc \
 	src/isolate.cc \
-	src/key-accumulator.cc \
+	src/keys.cc \
 	src/layout-descriptor.cc \
 	src/log.cc \
 	src/log-utils.cc \
@@ -261,6 +264,7 @@ LOCAL_SRC_FILES := \
 	src/parsing/scanner-character-streams.cc \
 	src/parsing/token.cc \
 	src/pending-compilation-error-handler.cc \
+	src/perf-jit.cc \
 	src/profiler/allocation-tracker.cc \
 	src/profiler/cpu-profiler.cc \
 	src/profiler/heap-profiler.cc \
@@ -314,10 +318,15 @@ LOCAL_SRC_FILES := \
 	src/runtime/runtime-typedarray.cc \
 	src/runtime/runtime-uri.cc \
 	src/safepoint-table.cc \
+	src/snapshot/code-serializer.cc \
+	src/snapshot/deserializer.cc \
 	src/snapshot/natives-common.cc \
-	src/snapshot/serialize.cc \
+	src/snapshot/partial-serializer.cc \
+	src/snapshot/serializer.cc \
+	src/snapshot/serializer-common.cc \
 	src/snapshot/snapshot-common.cc \
 	src/snapshot/snapshot-source-sink.cc \
+	src/snapshot/startup-serializer.cc \
 	src/startup-data-util.cc \
 	src/string-builder.cc \
 	src/string-stream.cc \
@@ -348,6 +357,7 @@ LOCAL_SRC_FILES := \
 	src/zone.cc
 
 LOCAL_SRC_FILES += \
+	src/base/accounting-allocator.cc \
 	src/base/atomicops_internals_x86_gcc.cc \
 	src/base/bits.cc \
 	src/base/cpu.cc \
@@ -585,10 +595,11 @@ V8_LOCAL_JS_EXPERIMENTAL_LIBRARY_FILES := \
 	src/js/proxy.js \
 	src/js/generator.js \
 	src/js/harmony-atomics.js \
-	src/js/harmony-regexp.js \
+	src/js/harmony-regexp-exec.js \
 	src/js/harmony-object-observe.js \
 	src/js/harmony-sharedarraybuffer.js \
 	src/js/harmony-simd.js \
 	src/js/harmony-species.js \
 	src/js/harmony-unicode-regexps.js \
+	src/js/harmony-string-padding.js \
 	src/js/promise-extra.js
