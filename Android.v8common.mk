@@ -65,11 +65,9 @@ LOCAL_SRC_FILES := \
 	src/compiler/dead-code-elimination.cc \
 	src/compiler/escape-analysis.cc \
 	src/compiler/escape-analysis-reducer.cc \
-	src/compiler/escape-analysis-reducer.h \
 	src/compiler/frame.cc \
 	src/compiler/frame-elider.cc \
 	src/compiler/frame-states.cc \
-	src/compiler/frame-states.h \
 	src/compiler/gap-resolver.cc \
 	src/compiler/graph.cc \
 	src/compiler/graph-reducer.cc \
