@@ -75,8 +75,6 @@ _mm256_cvtph_ps(__m128i __a)
 
 #include <avx512vlbwintrin.h>
 
-#include <avx512vlcdintrin.h>
-
 #include <avx512vldqintrin.h>
 
 #include <avx512erintrin.h>
@@ -88,8 +86,6 @@ _mm256_cvtph_ps(__m128i __a)
 #include <avx512vbmiintrin.h>
 
 #include <avx512vbmivlintrin.h>
-
-#include <avx512pfintrin.h>
 
 #include <pkuintrin.h>
 

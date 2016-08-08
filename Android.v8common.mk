@@ -36,6 +36,7 @@ LOCAL_SRC_FILES := \
 	src/char-predicates.cc \
 	src/code-factory.cc \
 	src/codegen.cc \
+	src/code-stub-assembler.cc \
 	src/code-stubs.cc \
 	src/code-stubs-hydrogen.cc \
 	src/compilation-cache.cc \
@@ -51,11 +52,10 @@ LOCAL_SRC_FILES := \
 	src/compiler/bytecode-branch-analysis.cc \
 	src/compiler/bytecode-graph-builder.cc \
 	src/compiler.cc \
-	src/compiler/change-lowering.cc \
 	src/compiler/c-linkage.cc \
 	src/compiler/coalesced-live-ranges.cc \
+	src/compiler/code-assembler.cc \
 	src/compiler/code-generator.cc \
-	src/compiler/code-stub-assembler.cc \
 	src/compiler/common-node-cache.cc \
 	src/compiler/common-operator.cc \
 	src/compiler/common-operator-reducer.cc \
@@ -63,6 +63,7 @@ LOCAL_SRC_FILES := \
 	src/compiler/control-equivalence.cc \
 	src/compiler/control-flow-optimizer.cc \
 	src/compiler/dead-code-elimination.cc \
+	src/compiler/effect-control-linearizer.cc \
 	src/compiler/escape-analysis.cc \
 	src/compiler/escape-analysis-reducer.cc \
 	src/compiler/frame.cc \
@@ -102,6 +103,7 @@ LOCAL_SRC_FILES := \
 	src/compiler/loop-peeling.cc \
 	src/compiler/machine-operator.cc \
 	src/compiler/machine-operator-reducer.cc \
+	src/compiler/memory-optimizer.cc \
 	src/compiler/move-optimizer.cc \
 	src/compiler/node-cache.cc \
 	src/compiler/node.cc \
@@ -185,6 +187,7 @@ LOCAL_SRC_FILES := \
 	src/extensions/externalize-string-extension.cc \
 	src/extensions/free-buffer-extension.cc \
 	src/extensions/gc-extension.cc \
+	src/extensions/ignition-statistics-extension.cc \
 	src/extensions/statistics-extension.cc \
 	src/extensions/trigger-failure-extension.cc \
 	src/external-reference-table.cc \
@@ -228,7 +231,10 @@ LOCAL_SRC_FILES := \
 	src/interface-descriptors.cc \
 	src/interpreter/bytecode-array-builder.cc \
 	src/interpreter/bytecode-array-iterator.cc \
+	src/interpreter/bytecode-array-writer.cc \
 	src/interpreter/bytecode-generator.cc \
+	src/interpreter/bytecode-peephole-optimizer.cc \
+	src/interpreter/bytecode-pipeline.cc \
 	src/interpreter/bytecode-register-allocator.cc \
 	src/interpreter/bytecodes.cc \
 	src/interpreter/constant-array-builder.cc \
@@ -271,6 +277,7 @@ LOCAL_SRC_FILES := \
 	src/profiler/sampler.cc \
 	src/profiler/sampling-heap-profiler.cc \
 	src/profiler/strings-storage.cc \
+	src/profiler/tick-sample.cc \
 	src/property.cc \
 	src/property-descriptor.cc \
 	src/regexp/interpreter-irregexp.cc \
@@ -304,7 +311,6 @@ LOCAL_SRC_FILES := \
 	src/runtime/runtime-maths.cc \
 	src/runtime/runtime-numbers.cc \
 	src/runtime/runtime-object.cc \
-	src/runtime/runtime-observe.cc \
 	src/runtime/runtime-operators.cc \
 	src/runtime/runtime-proxy.cc \
 	src/runtime/runtime-regexp.cc \
@@ -337,9 +343,9 @@ LOCAL_SRC_FILES := \
 	src/type-info.cc \
 	src/types.cc \
 	src/typing-asm.cc \
-	src/typing-reset.cc \
 	src/unicode.cc \
 	src/unicode-decoder.cc \
+	src/uri.cc \
 	src/utils.cc \
 	src/v8.cc \
 	src/v8threads.cc \
@@ -348,6 +354,9 @@ LOCAL_SRC_FILES := \
 	src/wasm/ast-decoder.cc \
 	src/wasm/encoder.cc \
 	src/wasm/module-decoder.cc \
+	src/wasm/switch-logic.cc \
+	src/wasm/wasm-external-refs.cc \
+	src/wasm/wasm-function-name-table.cc \
 	src/wasm/wasm-js.cc \
 	src/wasm/wasm-module.cc \
 	src/wasm/wasm-opcodes.cc \
@@ -570,11 +579,8 @@ V8_LOCAL_JS_LIBRARY_FILES := \
 	src/js/arraybuffer.js \
 	src/js/typedarray.js \
 	src/js/iterator-prototype.js \
-	src/js/generator.js \
-	src/js/object-observe.js \
 	src/js/collection.js \
 	src/js/weak-collection.js \
-	src/js/collection-iterator.js \
 	src/js/promise.js \
 	src/js/messages.js \
 	src/js/json.js \
@@ -582,6 +588,7 @@ V8_LOCAL_JS_LIBRARY_FILES := \
 	src/js/string-iterator.js \
 	src/js/templates.js \
 	src/js/spread.js \
+	src/js/proxy.js \
 	src/debug/mirrors.js \
 	src/debug/debug.js \
 	src/debug/liveedit.js \
@@ -590,14 +597,12 @@ V8_LOCAL_JS_LIBRARY_FILES := \
 V8_LOCAL_JS_EXPERIMENTAL_LIBRARY_FILES := \
 	src/js/macros.py \
 	src/messages.h \
-	src/js/proxy.js \
-	src/js/generator.js \
 	src/js/harmony-atomics.js \
 	src/js/harmony-regexp-exec.js \
-	src/js/harmony-object-observe.js \
 	src/js/harmony-sharedarraybuffer.js \
 	src/js/harmony-simd.js \
 	src/js/harmony-species.js \
 	src/js/harmony-unicode-regexps.js \
 	src/js/harmony-string-padding.js \
-	src/js/promise-extra.js
+	src/js/promise-extra.js \
+	src/js/harmony-async-await.js

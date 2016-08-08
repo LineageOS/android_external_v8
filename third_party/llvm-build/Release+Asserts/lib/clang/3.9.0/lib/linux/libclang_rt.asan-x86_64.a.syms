@@ -22,7 +22,6 @@
   __interceptor___isoc99_vsscanf;
   __interceptor___libc_memalign;
   __interceptor___overflow;
-  __interceptor___strdup;
   __interceptor___tls_get_addr;
   __interceptor___uflow;
   __interceptor___underflow;
@@ -30,7 +29,6 @@
   __interceptor___wuflow;
   __interceptor___wunderflow;
   __interceptor___xpg_strerror_r;
-  __interceptor___xstat;
   __interceptor__exit;
   __interceptor__longjmp;
   __interceptor__obstack_begin;
@@ -1075,7 +1073,6 @@
   __sanitizer_unaligned_store64;
   __sanitizer_update_counter_bitset_and_clear_counters;
   __sanitizer_verify_contiguous_container;
-  __strdup;
   __tls_get_addr;
   __ubsan_*;
   __uflow;
@@ -1084,7 +1081,6 @@
   __wuflow;
   __wunderflow;
   __xpg_strerror_r;
-  __xstat;
   _exit;
   _longjmp;
   _obstack_begin;
