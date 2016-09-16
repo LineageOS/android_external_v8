@@ -428,6 +428,10 @@ TARGET_TEST_F(InterpreterAssemblerTest, BytecodeOperand) {
             EXPECT_THAT(m.BytecodeOperandRuntimeId(i),
                         m.IsUnsignedOperand(offset, operand_size));
             break;
+          case interpreter::OperandType::kIntrinsicId:
+            EXPECT_THAT(m.BytecodeOperandIntrinsicId(i),
+                        m.IsUnsignedOperand(offset, operand_size));
+            break;
           case interpreter::OperandType::kNone:
             UNREACHABLE();
             break;
@@ -692,16 +696,14 @@ TARGET_TEST_F(InterpreterAssemblerTest, LoadTypeFeedbackVector) {
         m.IsLoad(MachineType::AnyTagged(), IsLoadParentFramePointer(),
                  IsIntPtrConstant(Register::function_closure().ToOperand()
                                   << kPointerSizeLog2));
-    Matcher<Node*> load_shared_function_info_matcher =
-        m.IsLoad(MachineType::AnyTagged(), load_function_matcher,
-                 IsIntPtrConstant(JSFunction::kSharedFunctionInfoOffset -
-                                  kHeapObjectTag));
+    Matcher<Node*> load_literals_matcher = m.IsLoad(
+        MachineType::AnyTagged(), load_function_matcher,
+        IsIntPtrConstant(JSFunction::kLiteralsOffset - kHeapObjectTag));
 
-    EXPECT_THAT(
-        feedback_vector,
-        m.IsLoad(MachineType::AnyTagged(), load_shared_function_info_matcher,
-                 IsIntPtrConstant(SharedFunctionInfo::kFeedbackVectorOffset -
-                                  kHeapObjectTag)));
+    EXPECT_THAT(feedback_vector,
+                m.IsLoad(MachineType::AnyTagged(), load_literals_matcher,
+                         IsIntPtrConstant(LiteralsArray::kFeedbackVectorOffset -
+                                          kHeapObjectTag)));
   }
 }
 

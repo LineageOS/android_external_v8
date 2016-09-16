@@ -52,8 +52,8 @@ LOCAL_SRC_FILES := \
 	src/compiler/bytecode-branch-analysis.cc \
 	src/compiler/bytecode-graph-builder.cc \
 	src/compiler.cc \
+	src/compiler/checkpoint-elimination.cc \
 	src/compiler/c-linkage.cc \
-	src/compiler/coalesced-live-ranges.cc \
 	src/compiler/code-assembler.cc \
 	src/compiler/code-generator.cc \
 	src/compiler/common-node-cache.cc \
@@ -75,7 +75,6 @@ LOCAL_SRC_FILES := \
 	src/compiler/graph-replay.cc \
 	src/compiler/graph-trimmer.cc \
 	src/compiler/graph-visualizer.cc \
-	src/compiler/greedy-allocator.cc \
 	src/compiler/instruction.cc \
 	src/compiler/instruction-scheduler.cc \
 	src/compiler/instruction-selector.cc \
@@ -111,12 +110,14 @@ LOCAL_SRC_FILES := \
 	src/compiler/node-matchers.cc \
 	src/compiler/node-properties.cc \
 	src/compiler/opcodes.cc \
+	src/compiler/operation-typer.cc \
 	src/compiler/operator.cc \
 	src/compiler/operator-properties.cc \
 	src/compiler/osr.cc \
 	src/compiler/pipeline.cc \
 	src/compiler/pipeline-statistics.cc \
 	src/compiler/raw-machine-assembler.cc \
+	src/compiler/redundancy-elimination.cc \
 	src/compiler/register-allocator.cc \
 	src/compiler/register-allocator-verifier.cc \
 	src/compiler/representation-change.cc \
@@ -128,6 +129,7 @@ LOCAL_SRC_FILES := \
 	src/compiler/simplified-operator-reducer.cc \
 	src/compiler/source-position.cc \
 	src/compiler/state-values-utils.cc \
+	src/compiler/store-store-elimination.cc \
 	src/compiler/tail-call-optimization.cc \
 	src/compiler/type-hint-analyzer.cc \
 	src/compiler/type-hints.cc \
@@ -181,6 +183,7 @@ LOCAL_SRC_FILES := \
 	src/disassembler.cc \
 	src/diy-fp.cc \
 	src/dtoa.cc \
+	src/eh-frame.cc \
 	src/elements.cc \
 	src/elements-kind.cc \
 	src/execution.cc \
@@ -232,10 +235,12 @@ LOCAL_SRC_FILES := \
 	src/interpreter/bytecode-array-builder.cc \
 	src/interpreter/bytecode-array-iterator.cc \
 	src/interpreter/bytecode-array-writer.cc \
+	src/interpreter/bytecode-dead-code-optimizer.cc \
 	src/interpreter/bytecode-generator.cc \
 	src/interpreter/bytecode-peephole-optimizer.cc \
 	src/interpreter/bytecode-pipeline.cc \
 	src/interpreter/bytecode-register-allocator.cc \
+	src/interpreter/bytecode-register-optimizer.cc \
 	src/interpreter/bytecodes.cc \
 	src/interpreter/constant-array-builder.cc \
 	src/interpreter/control-flow-builders.cc \
@@ -245,6 +250,8 @@ LOCAL_SRC_FILES := \
 	src/interpreter/interpreter-intrinsics.cc \
 	src/interpreter/source-position-table.cc \
 	src/isolate.cc \
+	src/json-parser.cc \
+	src/json-stringifier.cc \
 	src/keys.cc \
 	src/layout-descriptor.cc \
 	src/log.cc \
@@ -274,7 +281,7 @@ LOCAL_SRC_FILES := \
 	src/profiler/heap-profiler.cc \
 	src/profiler/heap-snapshot-generator.cc \
 	src/profiler/profile-generator.cc \
-	src/profiler/sampler.cc \
+	src/profiler/profiler-listener.cc \
 	src/profiler/sampling-heap-profiler.cc \
 	src/profiler/strings-storage.cc \
 	src/profiler/tick-sample.cc \
@@ -305,7 +312,6 @@ LOCAL_SRC_FILES := \
 	src/runtime/runtime-i18n.cc \
 	src/runtime/runtime-internal.cc \
 	src/runtime/runtime-interpreter.cc \
-	src/runtime/runtime-json.cc \
 	src/runtime/runtime-literals.cc \
 	src/runtime/runtime-liveedit.cc \
 	src/runtime/runtime-maths.cc \
@@ -320,7 +326,6 @@ LOCAL_SRC_FILES := \
 	src/runtime/runtime-symbol.cc \
 	src/runtime/runtime-test.cc \
 	src/runtime/runtime-typedarray.cc \
-	src/runtime/runtime-uri.cc \
 	src/safepoint-table.cc \
 	src/snapshot/code-serializer.cc \
 	src/snapshot/deserializer.cc \
@@ -335,7 +340,6 @@ LOCAL_SRC_FILES := \
 	src/string-builder.cc \
 	src/string-stream.cc \
 	src/strtod.cc \
-	src/third_party/fdlibm/fdlibm.cc \
 	src/tracing/trace-event.cc \
 	src/transitions.cc \
 	src/type-cache.cc \
@@ -350,13 +354,16 @@ LOCAL_SRC_FILES := \
 	src/v8.cc \
 	src/v8threads.cc \
 	src/version.cc \
+	src/wasm/asm-types.cc \
 	src/wasm/asm-wasm-builder.cc \
 	src/wasm/ast-decoder.cc \
 	src/wasm/encoder.cc \
 	src/wasm/module-decoder.cc \
 	src/wasm/switch-logic.cc \
+	src/wasm/wasm-debug.cc \
 	src/wasm/wasm-external-refs.cc \
 	src/wasm/wasm-function-name-table.cc \
+	src/wasm/wasm-interpreter.cc \
 	src/wasm/wasm-js.cc \
 	src/wasm/wasm-module.cc \
 	src/wasm/wasm-opcodes.cc \
@@ -369,7 +376,9 @@ LOCAL_SRC_FILES += \
 	src/base/bits.cc \
 	src/base/cpu.cc \
 	src/base/division-by-constant.cc \
+	src/base/file-utils.cc \
 	src/base/functional.cc \
+	src/base/ieee754.cc \
 	src/base/logging.cc \
 	src/base/once.cc \
 	src/base/platform/condition-variable.cc \
@@ -383,6 +392,9 @@ LOCAL_SRC_FILES += \
 	src/libplatform/default-platform.cc \
 	src/libplatform/task-queue.cc \
 	src/libplatform/worker-thread.cc
+
+LOCAL_SRC_FILES += \
+	src/libsampler/v8-sampler.cc
 
 v8_local_src_files_arm := \
 	src/arm/assembler-arm.cc \
@@ -572,7 +584,6 @@ V8_LOCAL_JS_LIBRARY_FILES := \
 	src/js/symbol.js \
 	src/js/array.js \
 	src/js/string.js \
-	src/js/uri.js \
 	src/js/math.js \
 	src/third_party/fdlibm/fdlibm.js \
 	src/js/regexp.js \
@@ -583,7 +594,6 @@ V8_LOCAL_JS_LIBRARY_FILES := \
 	src/js/weak-collection.js \
 	src/js/promise.js \
 	src/js/messages.js \
-	src/js/json.js \
 	src/js/array-iterator.js \
 	src/js/string-iterator.js \
 	src/js/templates.js \
@@ -598,11 +608,8 @@ V8_LOCAL_JS_EXPERIMENTAL_LIBRARY_FILES := \
 	src/js/macros.py \
 	src/messages.h \
 	src/js/harmony-atomics.js \
-	src/js/harmony-regexp-exec.js \
 	src/js/harmony-sharedarraybuffer.js \
 	src/js/harmony-simd.js \
-	src/js/harmony-species.js \
-	src/js/harmony-unicode-regexps.js \
 	src/js/harmony-string-padding.js \
 	src/js/promise-extra.js \
 	src/js/harmony-async-await.js

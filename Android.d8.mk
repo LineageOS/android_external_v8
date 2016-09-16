@@ -47,7 +47,6 @@ LOCAL_CFLAGS := \
 	-Wno-unused-parameter \
 	-Wno-sign-compare \
 	-Wno-missing-field-initializers \
-	-Wno-undefined-var-template \
 	-std=gnu++0x \
 	-O0
 

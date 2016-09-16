@@ -79,7 +79,7 @@ class SnapshotWriter {
   }
 
   void WriteData(const i::Vector<const i::byte>& blob) const {
-    fprintf(fp_, "static const byte blob_data[] __attribute__((aligned(8))) = {\n");
+    fprintf(fp_, "static const byte blob_data[] = {\n");
     WriteSnapshotData(blob);
     fprintf(fp_, "};\n");
     fprintf(fp_, "static const int blob_size = %d;\n", blob.length());
@@ -150,7 +150,7 @@ int main(int argc, char** argv) {
   }
 
   i::CpuFeatures::Probe(true);
-  V8::InitializeICU();
+  V8::InitializeICUDefaultLocation(argv[0]);
   v8::Platform* platform = v8::platform::CreateDefaultPlatform();
   v8::V8::InitializePlatform(platform);
   v8::V8::Initialize();

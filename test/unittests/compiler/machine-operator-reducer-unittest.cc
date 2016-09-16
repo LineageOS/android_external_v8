@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "src/compiler/machine-operator-reducer.h"
 #include "src/base/bits.h"
 #include "src/base/division-by-constant.h"
+#include "src/base/ieee754.h"
 #include "src/compiler/js-graph.h"
-#include "src/compiler/machine-operator-reducer.h"
 #include "src/compiler/typer.h"
 #include "src/conversions-inl.h"
 #include "test/unittests/compiler/graph-unittest.h"
@@ -16,6 +17,7 @@ using testing::AllOf;
 using testing::BitEq;
 using testing::Capture;
 using testing::CaptureEq;
+using testing::NanSensitiveDoubleEq;
 
 namespace v8 {
 namespace internal {
@@ -848,8 +850,24 @@ TEST_F(MachineOperatorReducerTest, Word32SarWithWord32ShlAndLoad) {
 
 
 // -----------------------------------------------------------------------------
-// Word32Shl
+// Word32Shr
 
+TEST_F(MachineOperatorReducerTest, Word32ShrWithWord32And) {
+  Node* const p0 = Parameter(0);
+  TRACED_FORRANGE(int32_t, shift, 1, 31) {
+    uint32_t mask = (1 << shift) - 1;
+    Node* node = graph()->NewNode(
+        machine()->Word32Shr(),
+        graph()->NewNode(machine()->Word32And(), p0, Int32Constant(mask)),
+        Int32Constant(shift));
+    Reduction r = Reduce(node);
+    ASSERT_TRUE(r.Changed());
+    EXPECT_THAT(r.replacement(), IsInt32Constant(0));
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Word32Shl
 
 TEST_F(MachineOperatorReducerTest, Word32ShlWithZeroShift) {
   Node* p0 = Parameter(0);
@@ -1266,28 +1284,31 @@ TEST_F(MachineOperatorReducerTest, Int32AddWithInt32SubWithConstantZero) {
 
 
 TEST_F(MachineOperatorReducerTest, Int32AddWithOverflowWithZero) {
+  Node* control = graph()->start();
   Node* p0 = Parameter(0);
   {
     Node* add = graph()->NewNode(machine()->Int32AddWithOverflow(),
-                                 Int32Constant(0), p0);
+                                 Int32Constant(0), p0, control);
 
-    Reduction r = Reduce(graph()->NewNode(common()->Projection(1), add));
+    Reduction r =
+        Reduce(graph()->NewNode(common()->Projection(1), add, control));
     ASSERT_TRUE(r.Changed());
     EXPECT_THAT(r.replacement(), IsInt32Constant(0));
 
-    r = Reduce(graph()->NewNode(common()->Projection(0), add));
+    r = Reduce(graph()->NewNode(common()->Projection(0), add, control));
     ASSERT_TRUE(r.Changed());
     EXPECT_EQ(p0, r.replacement());
   }
   {
     Node* add = graph()->NewNode(machine()->Int32AddWithOverflow(), p0,
-                                 Int32Constant(0));
+                                 Int32Constant(0), control);
 
-    Reduction r = Reduce(graph()->NewNode(common()->Projection(1), add));
+    Reduction r =
+        Reduce(graph()->NewNode(common()->Projection(1), add, control));
     ASSERT_TRUE(r.Changed());
     EXPECT_THAT(r.replacement(), IsInt32Constant(0));
 
-    r = Reduce(graph()->NewNode(common()->Projection(0), add));
+    r = Reduce(graph()->NewNode(common()->Projection(0), add, control));
     ASSERT_TRUE(r.Changed());
     EXPECT_EQ(p0, r.replacement());
   }
@@ -1295,18 +1316,20 @@ TEST_F(MachineOperatorReducerTest, Int32AddWithOverflowWithZero) {
 
 
 TEST_F(MachineOperatorReducerTest, Int32AddWithOverflowWithConstant) {
+  Node* control = graph()->start();
   TRACED_FOREACH(int32_t, x, kInt32Values) {
     TRACED_FOREACH(int32_t, y, kInt32Values) {
       int32_t z;
       Node* add = graph()->NewNode(machine()->Int32AddWithOverflow(),
-                                   Int32Constant(x), Int32Constant(y));
+                                   Int32Constant(x), Int32Constant(y), control);
 
-      Reduction r = Reduce(graph()->NewNode(common()->Projection(1), add));
+      Reduction r =
+          Reduce(graph()->NewNode(common()->Projection(1), add, control));
       ASSERT_TRUE(r.Changed());
       EXPECT_THAT(r.replacement(),
                   IsInt32Constant(base::bits::SignedAddOverflow32(x, y, &z)));
 
-      r = Reduce(graph()->NewNode(common()->Projection(0), add));
+      r = Reduce(graph()->NewNode(common()->Projection(0), add, control));
       ASSERT_TRUE(r.Changed());
       EXPECT_THAT(r.replacement(), IsInt32Constant(z));
     }
@@ -1319,33 +1342,36 @@ TEST_F(MachineOperatorReducerTest, Int32AddWithOverflowWithConstant) {
 
 
 TEST_F(MachineOperatorReducerTest, Int32SubWithOverflowWithZero) {
+  Node* control = graph()->start();
   Node* p0 = Parameter(0);
-  Node* add =
-      graph()->NewNode(machine()->Int32SubWithOverflow(), p0, Int32Constant(0));
+  Node* add = graph()->NewNode(machine()->Int32SubWithOverflow(), p0,
+                               Int32Constant(0), control);
 
-  Reduction r = Reduce(graph()->NewNode(common()->Projection(1), add));
+  Reduction r = Reduce(graph()->NewNode(common()->Projection(1), add, control));
   ASSERT_TRUE(r.Changed());
   EXPECT_THAT(r.replacement(), IsInt32Constant(0));
 
-  r = Reduce(graph()->NewNode(common()->Projection(0), add));
+  r = Reduce(graph()->NewNode(common()->Projection(0), add, control));
   ASSERT_TRUE(r.Changed());
   EXPECT_EQ(p0, r.replacement());
 }
 
 
 TEST_F(MachineOperatorReducerTest, Int32SubWithOverflowWithConstant) {
+  Node* control = graph()->start();
   TRACED_FOREACH(int32_t, x, kInt32Values) {
     TRACED_FOREACH(int32_t, y, kInt32Values) {
       int32_t z;
       Node* add = graph()->NewNode(machine()->Int32SubWithOverflow(),
-                                   Int32Constant(x), Int32Constant(y));
+                                   Int32Constant(x), Int32Constant(y), control);
 
-      Reduction r = Reduce(graph()->NewNode(common()->Projection(1), add));
+      Reduction r =
+          Reduce(graph()->NewNode(common()->Projection(1), add, control));
       ASSERT_TRUE(r.Changed());
       EXPECT_THAT(r.replacement(),
                   IsInt32Constant(base::bits::SignedSubOverflow32(x, y, &z)));
 
-      r = Reduce(graph()->NewNode(common()->Projection(0), add));
+      r = Reduce(graph()->NewNode(common()->Projection(0), add, control));
       ASSERT_TRUE(r.Changed());
       EXPECT_THAT(r.replacement(), IsInt32Constant(z));
     }
@@ -1399,8 +1425,133 @@ TEST_F(MachineOperatorReducerTest, Float64MulWithMinusOne) {
 
 
 // -----------------------------------------------------------------------------
-// Float64InsertLowWord32
+// Float64Atan
 
+TEST_F(MachineOperatorReducerTest, Float64AtanWithConstant) {
+  TRACED_FOREACH(double, x, kFloat64Values) {
+    Reduction const r =
+        Reduce(graph()->NewNode(machine()->Float64Atan(), Float64Constant(x)));
+    ASSERT_TRUE(r.Changed());
+    EXPECT_THAT(
+        r.replacement(),
+        IsFloat64Constant(NanSensitiveDoubleEq(base::ieee754::atan(x))));
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Float64Atan2
+
+TEST_F(MachineOperatorReducerTest, Float64Atan2WithConstant) {
+  TRACED_FOREACH(double, y, kFloat64Values) {
+    TRACED_FOREACH(double, x, kFloat64Values) {
+      Reduction const r = Reduce(graph()->NewNode(
+          machine()->Float64Atan2(), Float64Constant(y), Float64Constant(x)));
+      ASSERT_TRUE(r.Changed());
+      EXPECT_THAT(
+          r.replacement(),
+          IsFloat64Constant(NanSensitiveDoubleEq(base::ieee754::atan2(y, x))));
+    }
+  }
+}
+
+TEST_F(MachineOperatorReducerTest, Float64Atan2WithNaN) {
+  Node* const p0 = Parameter(0);
+  Node* const nan = Float64Constant(std::numeric_limits<double>::quiet_NaN());
+  {
+    Reduction const r =
+        Reduce(graph()->NewNode(machine()->Float64Atan2(), p0, nan));
+    ASSERT_TRUE(r.Changed());
+    EXPECT_EQ(nan, r.replacement());
+  }
+  {
+    Reduction const r =
+        Reduce(graph()->NewNode(machine()->Float64Atan2(), nan, p0));
+    ASSERT_TRUE(r.Changed());
+    EXPECT_EQ(nan, r.replacement());
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Float64Cos
+
+TEST_F(MachineOperatorReducerTest, Float64CosWithConstant) {
+  TRACED_FOREACH(double, x, kFloat64Values) {
+    Reduction const r =
+        Reduce(graph()->NewNode(machine()->Float64Cos(), Float64Constant(x)));
+    ASSERT_TRUE(r.Changed());
+    EXPECT_THAT(r.replacement(),
+                IsFloat64Constant(NanSensitiveDoubleEq(base::ieee754::cos(x))));
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Float64Exp
+
+TEST_F(MachineOperatorReducerTest, Float64ExpWithConstant) {
+  TRACED_FOREACH(double, x, kFloat64Values) {
+    Reduction const r =
+        Reduce(graph()->NewNode(machine()->Float64Exp(), Float64Constant(x)));
+    ASSERT_TRUE(r.Changed());
+    EXPECT_THAT(r.replacement(),
+                IsFloat64Constant(NanSensitiveDoubleEq(base::ieee754::exp(x))));
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Float64Log
+
+TEST_F(MachineOperatorReducerTest, Float64LogWithConstant) {
+  TRACED_FOREACH(double, x, kFloat64Values) {
+    Reduction const r =
+        Reduce(graph()->NewNode(machine()->Float64Log(), Float64Constant(x)));
+    ASSERT_TRUE(r.Changed());
+    EXPECT_THAT(r.replacement(),
+                IsFloat64Constant(NanSensitiveDoubleEq(base::ieee754::log(x))));
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Float64Log1p
+
+TEST_F(MachineOperatorReducerTest, Float64Log1pWithConstant) {
+  TRACED_FOREACH(double, x, kFloat64Values) {
+    Reduction const r =
+        Reduce(graph()->NewNode(machine()->Float64Log1p(), Float64Constant(x)));
+    ASSERT_TRUE(r.Changed());
+    EXPECT_THAT(
+        r.replacement(),
+        IsFloat64Constant(NanSensitiveDoubleEq(base::ieee754::log1p(x))));
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Float64Sin
+
+TEST_F(MachineOperatorReducerTest, Float64SinWithConstant) {
+  TRACED_FOREACH(double, x, kFloat64Values) {
+    Reduction const r =
+        Reduce(graph()->NewNode(machine()->Float64Sin(), Float64Constant(x)));
+    ASSERT_TRUE(r.Changed());
+    EXPECT_THAT(r.replacement(),
+                IsFloat64Constant(NanSensitiveDoubleEq(base::ieee754::sin(x))));
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Float64Tan
+
+TEST_F(MachineOperatorReducerTest, Float64TanWithConstant) {
+  TRACED_FOREACH(double, x, kFloat64Values) {
+    Reduction const r =
+        Reduce(graph()->NewNode(machine()->Float64Tan(), Float64Constant(x)));
+    ASSERT_TRUE(r.Changed());
+    EXPECT_THAT(r.replacement(),
+                IsFloat64Constant(NanSensitiveDoubleEq(base::ieee754::tan(x))));
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Float64InsertLowWord32
 
 TEST_F(MachineOperatorReducerTest, Float64InsertLowWord32WithConstant) {
   TRACED_FOREACH(double, x, kFloat64Values) {

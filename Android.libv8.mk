@@ -92,7 +92,6 @@ LOCAL_CFLAGS += \
 	-Wno-unused-parameter \
 	-Wno-sign-compare \
 	-Wno-missing-field-initializers \
-	-Wno-undefined-var-template \
 	-fno-exceptions \
 	-fvisibility=hidden \
 	-DENABLE_DEBUGGER_SUPPORT \

@@ -350,7 +350,6 @@
   __interceptor_socketpair;
   __interceptor_sprintf;
   __interceptor_sscanf;
-  __interceptor_stat;
   __interceptor_stat64;
   __interceptor_statfs;
   __interceptor_statfs64;
@@ -1461,7 +1460,6 @@
   socketpair;
   sprintf;
   sscanf;
-  stat;
   stat64;
   statfs;
   statfs64;

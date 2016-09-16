@@ -254,35 +254,6 @@ TEST(Bytecodes, PrefixMappings) {
   }
 }
 
-TEST(Bytecodes, OperandScales) {
-  CHECK_EQ(Bytecodes::OperandSizesToScale(OperandSize::kByte),
-           OperandScale::kSingle);
-  CHECK_EQ(Bytecodes::OperandSizesToScale(OperandSize::kShort),
-           OperandScale::kDouble);
-  CHECK_EQ(Bytecodes::OperandSizesToScale(OperandSize::kQuad),
-           OperandScale::kQuadruple);
-  CHECK_EQ(
-      Bytecodes::OperandSizesToScale(OperandSize::kShort, OperandSize::kShort,
-                                     OperandSize::kShort, OperandSize::kShort),
-      OperandScale::kDouble);
-  CHECK_EQ(
-      Bytecodes::OperandSizesToScale(OperandSize::kQuad, OperandSize::kShort,
-                                     OperandSize::kShort, OperandSize::kShort),
-      OperandScale::kQuadruple);
-  CHECK_EQ(
-      Bytecodes::OperandSizesToScale(OperandSize::kShort, OperandSize::kQuad,
-                                     OperandSize::kShort, OperandSize::kShort),
-      OperandScale::kQuadruple);
-  CHECK_EQ(
-      Bytecodes::OperandSizesToScale(OperandSize::kShort, OperandSize::kShort,
-                                     OperandSize::kQuad, OperandSize::kShort),
-      OperandScale::kQuadruple);
-  CHECK_EQ(
-      Bytecodes::OperandSizesToScale(OperandSize::kShort, OperandSize::kShort,
-                                     OperandSize::kShort, OperandSize::kQuad),
-      OperandScale::kQuadruple);
-}
-
 TEST(Bytecodes, SizesForSignedOperands) {
   CHECK(Bytecodes::SizeForSignedOperand(0) == OperandSize::kByte);
   CHECK(Bytecodes::SizeForSignedOperand(kMaxInt8) == OperandSize::kByte);
@@ -366,7 +337,6 @@ TEST(AccumulatorUse, AccumulatorUseToString) {
   names.insert(Bytecodes::AccumulatorUseToString(AccumulatorUse::kReadWrite));
   CHECK_EQ(names.size(), 4);
 }
-
 }  // namespace interpreter
 }  // namespace internal
 }  // namespace v8
