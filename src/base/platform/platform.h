@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "src/base/base-export.h"
 #include "src/base/build_config.h"
 #include "src/base/compiler-specific.h"
 #include "src/base/platform/mutex.h"
@@ -69,7 +70,7 @@ inline intptr_t InternalGetExistingThreadLocal(intptr_t index) {
 
 #define V8_FAST_TLS_SUPPORTED 1
 
-extern intptr_t kMacTlsBaseOffset;
+extern V8_BASE_EXPORT intptr_t kMacTlsBaseOffset;
 
 INLINE(intptr_t InternalGetExistingThreadLocal(intptr_t index));
 
@@ -102,7 +103,7 @@ class TimezoneCache;
 // functions. Add methods here to cope with differences between the
 // supported platforms.
 
-class OS {
+class V8_BASE_EXPORT OS {
  public:
   // Initialize the OS class.
   // - random_seed: Used for the GetRandomMmapAddress() if non-zero.
@@ -177,6 +178,11 @@ class OS {
                         bool is_executable);
   static void Free(void* address, const size_t size);
 
+  // Allocates a region of memory that is inaccessible. On Windows this reserves
+  // but does not commit the memory. On Linux, it is equivalent to a call to
+  // Allocate() followed by Guard().
+  static void* AllocateGuarded(const size_t requested);
+
   // This is the granularity at which the ProtectCode(...) call can set page
   // permissions.
   static intptr_t CommitPageSize();
@@ -186,6 +192,9 @@ class OS {
 
   // Assign memory as a guard page so that access will cause an exception.
   static void Guard(void* address, const size_t size);
+
+  // Make a region of memory readable and writable.
+  static void Unprotect(void* address, const size_t size);
 
   // Generate a random address to be used for hinting mmap().
   static void* GetRandomMmapAddr();
@@ -211,7 +220,7 @@ class OS {
     char text[kStackWalkMaxTextLen];
   };
 
-  class MemoryMappedFile {
+  class V8_BASE_EXPORT MemoryMappedFile {
    public:
     virtual ~MemoryMappedFile() {}
     virtual void* memory() const = 0;
@@ -286,7 +295,7 @@ class OS {
 // Control of the reserved memory can be assigned to another VirtualMemory
 // object by assignment or copy-contructing. This removes the reserved memory
 // from the original object.
-class VirtualMemory {
+class V8_BASE_EXPORT VirtualMemory {
  public:
   // Empty VirtualMemory object, controlling no reserved memory.
   VirtualMemory();
@@ -337,6 +346,23 @@ class VirtualMemory {
   // Creates a single guard page at the given address.
   bool Guard(void* address);
 
+  // Releases the memory after |free_start|.
+  void ReleasePartial(void* free_start) {
+    DCHECK(IsReserved());
+    // Notice: Order is important here. The VirtualMemory object might live
+    // inside the allocated region.
+    size_t size = size_ - (reinterpret_cast<size_t>(free_start) -
+                           reinterpret_cast<size_t>(address_));
+    CHECK(InVM(free_start, size));
+    DCHECK_LT(address_, free_start);
+    DCHECK_LT(free_start, reinterpret_cast<void*>(
+                              reinterpret_cast<size_t>(address_) + size_));
+    bool result = ReleasePartialRegion(address_, size_, free_start, size);
+    USE(result);
+    DCHECK(result);
+    size_ -= size;
+  }
+
   void Release() {
     DCHECK(IsReserved());
     // Notice: Order is important here. The VirtualMemory object might live
@@ -369,6 +395,12 @@ class VirtualMemory {
   // and the same size it was reserved with.
   static bool ReleaseRegion(void* base, size_t size);
 
+  // Must be called with a base pointer that has been returned by ReserveRegion
+  // and the same size it was reserved with.
+  // [free_start, free_start + free_size] is the memory that will be released.
+  static bool ReleasePartialRegion(void* base, size_t size, void* free_start,
+                                   size_t free_size);
+
   // Returns true if OS performs lazy commits, i.e. the memory allocation call
   // defers actual physical memory allocation till the first memory access.
   // Otherwise returns false.
@@ -395,7 +427,7 @@ class VirtualMemory {
 // thread. The Thread object should not be deallocated before the thread has
 // terminated.
 
-class Thread {
+class V8_BASE_EXPORT Thread {
  public:
   // Opaque data type for thread-local storage keys.
   typedef int32_t LocalStorageKey;

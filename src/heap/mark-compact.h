@@ -8,11 +8,16 @@
 #include <deque>
 
 #include "src/base/bits.h"
+#include "src/base/platform/condition-variable.h"
+#include "src/cancelable-task.h"
+#include "src/heap/marking.h"
 #include "src/heap/spaces.h"
 #include "src/heap/store-buffer.h"
 
 namespace v8 {
 namespace internal {
+
+enum class MarkCompactMode { FULL, YOUNG_GENERATION };
 
 // Callback function, returns whether an object is alive. The heap size
 // of the object is returned in size. It optionally updates the offset
@@ -26,180 +31,125 @@ typedef void (*MarkObjectFunction)(Heap* heap, HeapObject* object);
 class CodeFlusher;
 class MarkCompactCollector;
 class MarkingVisitor;
+template <MarkCompactMode mode>
 class RootMarkingVisitor;
 
-class Marking : public AllStatic {
+class ObjectMarking : public AllStatic {
  public:
-  INLINE(static MarkBit MarkBitFrom(Address addr)) {
-    MemoryChunk* p = MemoryChunk::FromAddress(addr);
-    return p->markbits()->MarkBitFromIndex(p->AddressToMarkbitIndex(addr));
+  V8_INLINE static MarkBit MarkBitFrom(HeapObject* obj) {
+    const Address address = obj->address();
+    MemoryChunk* p = MemoryChunk::FromAddress(address);
+    return p->markbits()->MarkBitFromIndex(p->AddressToMarkbitIndex(address));
   }
 
-  INLINE(static MarkBit MarkBitFrom(HeapObject* obj)) {
-    return MarkBitFrom(reinterpret_cast<Address>(obj));
+  static Marking::ObjectColor Color(HeapObject* obj) {
+    return Marking::Color(ObjectMarking::MarkBitFrom(obj));
   }
 
-  // Impossible markbits: 01
-  static const char* kImpossibleBitPattern;
-  INLINE(static bool IsImpossible(MarkBit mark_bit)) {
-    return !mark_bit.Get() && mark_bit.Next().Get();
+  V8_INLINE static bool IsImpossible(HeapObject* obj) {
+    return Marking::IsImpossible(MarkBitFrom(obj));
   }
 
-  // Black markbits: 11
-  static const char* kBlackBitPattern;
-  INLINE(static bool IsBlack(MarkBit mark_bit)) {
-    return mark_bit.Get() && mark_bit.Next().Get();
+  V8_INLINE static bool IsBlack(HeapObject* obj) {
+    return Marking::IsBlack(MarkBitFrom(obj));
   }
 
-  // White markbits: 00 - this is required by the mark bit clearer.
-  static const char* kWhiteBitPattern;
-  INLINE(static bool IsWhite(MarkBit mark_bit)) {
-    DCHECK(!IsImpossible(mark_bit));
-    return !mark_bit.Get();
+  V8_INLINE static bool IsWhite(HeapObject* obj) {
+    return Marking::IsWhite(MarkBitFrom(obj));
   }
 
-  // Grey markbits: 10
-  static const char* kGreyBitPattern;
-  INLINE(static bool IsGrey(MarkBit mark_bit)) {
-    return mark_bit.Get() && !mark_bit.Next().Get();
+  V8_INLINE static bool IsGrey(HeapObject* obj) {
+    return Marking::IsGrey(MarkBitFrom(obj));
   }
 
-  // IsBlackOrGrey assumes that the first bit is set for black or grey
-  // objects.
-  INLINE(static bool IsBlackOrGrey(MarkBit mark_bit)) { return mark_bit.Get(); }
-
-  INLINE(static void MarkBlack(MarkBit mark_bit)) {
-    mark_bit.Set();
-    mark_bit.Next().Set();
+  V8_INLINE static bool IsBlackOrGrey(HeapObject* obj) {
+    return Marking::IsBlackOrGrey(MarkBitFrom(obj));
   }
 
-  INLINE(static void MarkWhite(MarkBit mark_bit)) {
-    mark_bit.Clear();
-    mark_bit.Next().Clear();
+  V8_INLINE static void ClearMarkBit(HeapObject* obj) {
+    Marking::MarkWhite(MarkBitFrom(obj));
   }
 
-  INLINE(static void BlackToWhite(MarkBit markbit)) {
-    DCHECK(IsBlack(markbit));
-    markbit.Clear();
-    markbit.Next().Clear();
+  V8_INLINE static void BlackToWhite(HeapObject* obj) {
+    DCHECK(IsBlack(obj));
+    MarkBit markbit = MarkBitFrom(obj);
+    Marking::BlackToWhite(markbit);
+    MemoryChunk::IncrementLiveBytes(obj, -obj->Size());
   }
 
-  INLINE(static void GreyToWhite(MarkBit markbit)) {
-    DCHECK(IsGrey(markbit));
-    markbit.Clear();
-    markbit.Next().Clear();
+  V8_INLINE static void GreyToWhite(HeapObject* obj) {
+    DCHECK(IsGrey(obj));
+    Marking::GreyToWhite(MarkBitFrom(obj));
   }
 
-  INLINE(static void BlackToGrey(MarkBit markbit)) {
-    DCHECK(IsBlack(markbit));
-    markbit.Next().Clear();
+  V8_INLINE static void BlackToGrey(HeapObject* obj) {
+    DCHECK(IsBlack(obj));
+    MarkBit markbit = MarkBitFrom(obj);
+    Marking::BlackToGrey(markbit);
+    MemoryChunk::IncrementLiveBytes(obj, -obj->Size());
   }
 
-  INLINE(static void WhiteToGrey(MarkBit markbit)) {
-    DCHECK(IsWhite(markbit));
-    markbit.Set();
+  V8_INLINE static void WhiteToGrey(HeapObject* obj) {
+    DCHECK(IsWhite(obj));
+    Marking::WhiteToGrey(MarkBitFrom(obj));
   }
 
-  INLINE(static void WhiteToBlack(MarkBit markbit)) {
-    DCHECK(IsWhite(markbit));
-    markbit.Set();
-    markbit.Next().Set();
+  V8_INLINE static void WhiteToBlack(HeapObject* obj) {
+    DCHECK(IsWhite(obj));
+    MarkBit markbit = MarkBitFrom(obj);
+    Marking::WhiteToBlack(markbit);
+    MemoryChunk::IncrementLiveBytes(obj, obj->Size());
   }
 
-  INLINE(static void GreyToBlack(MarkBit markbit)) {
-    DCHECK(IsGrey(markbit));
-    markbit.Next().Set();
+  V8_INLINE static void GreyToBlack(HeapObject* obj) {
+    DCHECK(IsGrey(obj));
+    MarkBit markbit = MarkBitFrom(obj);
+    Marking::GreyToBlack(markbit);
+    MemoryChunk::IncrementLiveBytes(obj, obj->Size());
   }
 
-  INLINE(static void BlackToGrey(HeapObject* obj)) {
-    BlackToGrey(MarkBitFrom(obj));
-  }
-
-  INLINE(static void AnyToGrey(MarkBit markbit)) {
-    markbit.Set();
-    markbit.Next().Clear();
-  }
-
-  static void TransferMark(Heap* heap, Address old_start, Address new_start);
-
-#ifdef DEBUG
-  enum ObjectColor {
-    BLACK_OBJECT,
-    WHITE_OBJECT,
-    GREY_OBJECT,
-    IMPOSSIBLE_COLOR
-  };
-
-  static const char* ColorName(ObjectColor color) {
-    switch (color) {
-      case BLACK_OBJECT:
-        return "black";
-      case WHITE_OBJECT:
-        return "white";
-      case GREY_OBJECT:
-        return "grey";
-      case IMPOSSIBLE_COLOR:
-        return "impossible";
+  V8_INLINE static void AnyToGrey(HeapObject* obj) {
+    MarkBit markbit = MarkBitFrom(obj);
+    if (Marking::IsBlack(markbit)) {
+      MemoryChunk::IncrementLiveBytes(obj, -obj->Size());
     }
-    return "error";
-  }
-
-  static ObjectColor Color(HeapObject* obj) {
-    return Color(Marking::MarkBitFrom(obj));
-  }
-
-  static ObjectColor Color(MarkBit mark_bit) {
-    if (IsBlack(mark_bit)) return BLACK_OBJECT;
-    if (IsWhite(mark_bit)) return WHITE_OBJECT;
-    if (IsGrey(mark_bit)) return GREY_OBJECT;
-    UNREACHABLE();
-    return IMPOSSIBLE_COLOR;
-  }
-#endif
-
-  // Returns true if the transferred color is black.
-  INLINE(static bool TransferColor(HeapObject* from, HeapObject* to)) {
-    if (Page::FromAddress(to->address())->IsFlagSet(Page::BLACK_PAGE))
-      return true;
-    MarkBit from_mark_bit = MarkBitFrom(from);
-    MarkBit to_mark_bit = MarkBitFrom(to);
-    DCHECK(Marking::IsWhite(to_mark_bit));
-    if (from_mark_bit.Get()) {
-      to_mark_bit.Set();
-      if (from_mark_bit.Next().Get()) {
-        to_mark_bit.Next().Set();
-        return true;
-      }
-    }
-    return false;
+    Marking::AnyToGrey(markbit);
   }
 
  private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(Marking);
+  DISALLOW_IMPLICIT_CONSTRUCTORS(ObjectMarking);
 };
 
 // ----------------------------------------------------------------------------
 // Marking deque for tracing live objects.
 class MarkingDeque {
  public:
-  MarkingDeque()
-      : array_(NULL),
+  explicit MarkingDeque(Heap* heap)
+      : backing_store_(nullptr),
+        backing_store_committed_size_(0),
+        array_(nullptr),
         top_(0),
         bottom_(0),
         mask_(0),
         overflowed_(false),
-        in_use_(false) {}
+        in_use_(false),
+        uncommit_task_pending_(false),
+        heap_(heap) {}
 
-  void Initialize(Address low, Address high);
-  void Uninitialize(bool aborting = false);
+  void SetUp();
+  void TearDown();
+
+  // Ensures that the marking deque is committed and will stay committed until
+  // StopUsing() is called.
+  void StartUsing();
+  void StopUsing();
+  void Clear();
 
   inline bool IsFull() { return ((top_ + 1) & mask_) == bottom_; }
 
   inline bool IsEmpty() { return top_ == bottom_; }
 
   bool overflowed() const { return overflowed_; }
-
-  bool in_use() const { return in_use_; }
 
   void ClearOverflowed() { overflowed_ = false; }
 
@@ -248,6 +198,43 @@ class MarkingDeque {
   void set_top(int top) { top_ = top; }
 
  private:
+  // This task uncommits the marking_deque backing store if
+  // markin_deque->in_use_ is false.
+  class UncommitTask : public CancelableTask {
+   public:
+    explicit UncommitTask(Isolate* isolate, MarkingDeque* marking_deque)
+        : CancelableTask(isolate), marking_deque_(marking_deque) {}
+
+   private:
+    // CancelableTask override.
+    void RunInternal() override {
+      base::LockGuard<base::Mutex> guard(&marking_deque_->mutex_);
+      if (!marking_deque_->in_use_) {
+        marking_deque_->Uncommit();
+      }
+      marking_deque_->uncommit_task_pending_ = false;
+    }
+
+    MarkingDeque* marking_deque_;
+    DISALLOW_COPY_AND_ASSIGN(UncommitTask);
+  };
+
+  static const size_t kMaxSize = 4 * MB;
+  static const size_t kMinSize = 256 * KB;
+
+  // Must be called with mutex lock.
+  void EnsureCommitted();
+
+  // Must be called with mutex lock.
+  void Uncommit();
+
+  // Must be called with mutex lock.
+  void StartUncommitTask();
+
+  base::Mutex mutex_;
+
+  base::VirtualMemory* backing_store_;
+  size_t backing_store_committed_size_;
   HeapObject** array_;
   // array_[(top - 1) & mask_] is the top element in the deque.  The Deque is
   // empty when top_ == bottom_.  It is full when top_ + 1 == bottom
@@ -256,7 +243,11 @@ class MarkingDeque {
   int bottom_;
   int mask_;
   bool overflowed_;
+  // in_use_ == true after taking mutex lock implies that the marking deque is
+  // committed and will stay committed at least until in_use_ == false.
   bool in_use_;
+  bool uncommit_task_pending_;
+  Heap* heap_;
 
   DISALLOW_COPY_AND_ASSIGN(MarkingDeque);
 };
@@ -348,7 +339,19 @@ class MarkBitCellIterator BASE_EMBEDDED {
 
   inline void Advance() {
     cell_index_++;
-    cell_base_ += 32 * kPointerSize;
+    cell_base_ += Bitmap::kBitsPerCell * kPointerSize;
+  }
+
+  inline bool Advance(unsigned int new_cell_index) {
+    if (new_cell_index != cell_index_) {
+      DCHECK_GT(new_cell_index, cell_index_);
+      DCHECK_LE(new_cell_index, last_cell_index_);
+      unsigned int diff = new_cell_index - cell_index_;
+      cell_index_ = new_cell_index;
+      cell_base_ += diff * (Bitmap::kBitsPerCell * kPointerSize);
+      return true;
+    }
+    return false;
   }
 
   // Return the next mark bit cell. If there is no next it returns 0;
@@ -383,18 +386,20 @@ class LiveObjectIterator BASE_EMBEDDED {
         it_(chunk_),
         cell_base_(it_.CurrentCellBase()),
         current_cell_(*it_.CurrentCell()) {
-    // Black pages can not be iterated.
-    DCHECK(!chunk->IsFlagSet(Page::BLACK_PAGE));
   }
 
   HeapObject* Next();
 
  private:
+  inline Heap* heap() { return chunk_->heap(); }
+
   MemoryChunk* chunk_;
   MarkBitCellIterator it_;
   Address cell_base_;
   MarkBit::CellType current_cell_;
 };
+
+enum PageEvacuationMode { NEW_TO_NEW, NEW_TO_OLD };
 
 // -------------------------------------------------------------------------
 // Mark-Compact collector
@@ -406,43 +411,43 @@ class MarkCompactCollector {
    public:
     class SweeperTask;
 
-    enum SweepingMode { SWEEP_ONLY, SWEEP_AND_VISIT_LIVE_OBJECTS };
-    enum SkipListRebuildingMode { REBUILD_SKIP_LIST, IGNORE_SKIP_LIST };
     enum FreeListRebuildingMode { REBUILD_FREE_LIST, IGNORE_FREE_LIST };
     enum FreeSpaceTreatmentMode { IGNORE_FREE_SPACE, ZAP_FREE_SPACE };
-    enum SweepingParallelism { SWEEP_ON_MAIN_THREAD, SWEEP_IN_PARALLEL };
+    enum ClearOldToNewSlotsMode {
+      DO_NOT_CLEAR,
+      CLEAR_REGULAR_SLOTS,
+      CLEAR_TYPED_SLOTS
+    };
 
     typedef std::deque<Page*> SweepingList;
     typedef List<Page*> SweptList;
 
-    template <SweepingMode sweeping_mode, SweepingParallelism parallelism,
-              SkipListRebuildingMode skip_list_mode,
-              FreeListRebuildingMode free_list_mode,
-              FreeSpaceTreatmentMode free_space_mode>
-    static int RawSweep(PagedSpace* space, Page* p, ObjectVisitor* v);
+    static int RawSweep(Page* p, FreeListRebuildingMode free_list_mode,
+                        FreeSpaceTreatmentMode free_space_mode);
 
     explicit Sweeper(Heap* heap)
         : heap_(heap),
           pending_sweeper_tasks_semaphore_(0),
           sweeping_in_progress_(false),
-          late_pages_(false),
           num_sweeping_tasks_(0) {}
 
     bool sweeping_in_progress() { return sweeping_in_progress_; }
-    bool contains_late_pages() { return late_pages_; }
 
     void AddPage(AllocationSpace space, Page* page);
-    void AddLatePage(AllocationSpace space, Page* page);
 
     int ParallelSweepSpace(AllocationSpace identity, int required_freed_bytes,
                            int max_pages = 0);
     int ParallelSweepPage(Page* page, AllocationSpace identity);
 
+    // After calling this function sweeping is considered to be in progress
+    // and the main thread can sweep lazily, but the background sweeper tasks
+    // are not running yet.
     void StartSweeping();
-    void StartSweepingHelper(AllocationSpace space_to_start);
+    void StartSweeperTasks();
     void EnsureCompleted();
     void EnsureNewSpaceCompleted();
-    bool IsSweepingCompleted();
+    bool AreSweeperTasksRunning();
+    bool IsSweepingCompleted(AllocationSpace space);
     void SweepOrWaitUntilSweepingCompleted(Page* page);
 
     void AddSweptPageSafe(PagedSpace* space, Page* page);
@@ -450,6 +455,8 @@ class MarkCompactCollector {
 
    private:
     static const int kAllocationSpaces = LAST_PAGED_SPACE + 1;
+
+    static ClearOldToNewSlotsMode GetClearOldToNewSlotsMode(Page* p);
 
     template <typename Callback>
     void ForAllSweepingSpaces(Callback callback) {
@@ -469,7 +476,6 @@ class MarkCompactCollector {
     SweptList swept_list_[kAllocationSpaces];
     SweepingList sweeping_list_[kAllocationSpaces];
     bool sweeping_in_progress_;
-    bool late_pages_;
     base::AtomicNumber<intptr_t> num_sweeping_tasks_;
   };
 
@@ -479,6 +485,9 @@ class MarkCompactCollector {
   };
 
   static void Initialize();
+
+  static SlotCallbackResult CheckAndMarkObject(Heap* heap,
+                                               Address slot_address);
 
   void SetUp();
 
@@ -495,17 +504,9 @@ class MarkCompactCollector {
   // Performs a global garbage collection.
   void CollectGarbage();
 
-  enum CompactionMode { INCREMENTAL_COMPACTION, NON_INCREMENTAL_COMPACTION };
-
-  bool StartCompaction(CompactionMode mode);
+  bool StartCompaction();
 
   void AbortCompaction();
-
-#ifdef DEBUG
-  // Checks whether performing mark-compact collection.
-  bool in_use() { return state_ > PREPARE_GC; }
-  bool are_map_pointers_encoded() { return state_ == UPDATE_POINTERS; }
-#endif
 
   // Determine type of object and emit deletion log event.
   static void ReportDeleteIfNeeded(HeapObject* obj, Isolate* isolate);
@@ -515,7 +516,6 @@ class MarkCompactCollector {
   static const uint32_t kSingleFreeEncoding = 0;
   static const uint32_t kMultiFreeEncoding = 1;
 
-  static inline bool IsMarked(Object* obj);
   static bool IsUnmarkedHeapObjectWithHeap(Heap* heap, Object** p);
 
   inline Heap* heap() const { return heap_; }
@@ -524,21 +524,12 @@ class MarkCompactCollector {
   CodeFlusher* code_flusher() { return code_flusher_; }
   inline bool is_code_flushing_enabled() const { return code_flusher_ != NULL; }
 
-#ifdef VERIFY_HEAP
-  void VerifyValidStoreAndSlotsBufferEntries();
-  void VerifyMarkbitsAreClean();
-  static void VerifyMarkbitsAreClean(PagedSpace* space);
-  static void VerifyMarkbitsAreClean(NewSpace* space);
-  void VerifyWeakEmbeddedObjectsInCode();
-  void VerifyOmittedMapChecks();
-#endif
-
   INLINE(static bool ShouldSkipEvacuationSlotRecording(Object* host)) {
     return Page::FromAddress(reinterpret_cast<Address>(host))
         ->ShouldSkipEvacuationSlotRecording();
   }
 
-  INLINE(static bool IsOnEvacuationCandidate(Object* obj)) {
+  static inline bool IsOnEvacuationCandidate(HeapObject* obj) {
     return Page::FromAddress(reinterpret_cast<Address>(obj))
         ->IsEvacuationCandidate();
   }
@@ -549,6 +540,7 @@ class MarkCompactCollector {
   INLINE(void RecordSlot(HeapObject* object, Object** slot, Object* target));
   INLINE(void ForceRecordSlot(HeapObject* object, Object** slot,
                               Object* target));
+  void RecordLiveSlotsOnPage(Page* page);
 
   void UpdateSlots(SlotsBuffer* buffer);
   void UpdateSlotsRecordedIn(SlotsBuffer* buffer);
@@ -558,8 +550,6 @@ class MarkCompactCollector {
   void ClearMarkbits();
 
   bool is_compacting() const { return compacting_; }
-
-  MarkingParity marking_parity() { return marking_parity_; }
 
   // Ensures that sweeping is finished.
   //
@@ -579,71 +569,50 @@ class MarkCompactCollector {
 
   bool evacuation() const { return evacuation_; }
 
-  // Special case for processing weak references in a full collection. We need
-  // to artificially keep AllocationSites alive for a time.
-  void MarkAllocationSite(AllocationSite* site);
-
   // Mark objects in implicit references groups if their parent object
   // is marked.
   void MarkImplicitRefGroups(MarkObjectFunction mark_object);
 
   MarkingDeque* marking_deque() { return &marking_deque_; }
 
-  static const size_t kMaxMarkingDequeSize = 4 * MB;
-  static const size_t kMinMarkingDequeSize = 256 * KB;
-
-  void EnsureMarkingDequeIsCommittedAndInitialize(size_t max_size) {
-    if (!marking_deque_.in_use()) {
-      EnsureMarkingDequeIsCommitted(max_size);
-      InitializeMarkingDeque();
-    }
-  }
-
-  void EnsureMarkingDequeIsCommitted(size_t max_size);
-  void EnsureMarkingDequeIsReserved();
-
-  void InitializeMarkingDeque();
-
-  // The following two methods can just be called after marking, when the
-  // whole transitive closure is known. They must be called before sweeping
-  // when mark bits are still intact.
-  bool IsSlotInBlackObject(MemoryChunk* p, Address slot);
-  HeapObject* FindBlackObjectBySlotSlow(Address slot);
-
-  // Removes all the slots in the slot buffers that are within the given
-  // address range.
-  void RemoveObjectSlots(Address start_slot, Address end_slot);
-
   Sweeper& sweeper() { return sweeper_; }
 
-  void RegisterWrappersWithEmbedderHeapTracer();
+#ifdef DEBUG
+  // Checks whether performing mark-compact collection.
+  bool in_use() { return state_ > PREPARE_GC; }
+  bool are_map_pointers_encoded() { return state_ == UPDATE_POINTERS; }
+#endif
 
-  void SetEmbedderHeapTracer(EmbedderHeapTracer* tracer);
-
-  EmbedderHeapTracer* embedder_heap_tracer() { return embedder_heap_tracer_; }
-
-  bool UsingEmbedderHeapTracer() { return embedder_heap_tracer(); }
-
-  void TracePossibleWrapper(JSObject* js_object);
-
-  void RegisterExternallyReferencedObject(Object** object);
+#ifdef VERIFY_HEAP
+  void VerifyValidStoreAndSlotsBufferEntries();
+  void VerifyMarkbitsAreClean();
+  static void VerifyMarkbitsAreClean(PagedSpace* space);
+  static void VerifyMarkbitsAreClean(NewSpace* space);
+  void VerifyWeakEmbeddedObjectsInCode();
+  void VerifyOmittedMapChecks();
+#endif
 
  private:
+  template <PageEvacuationMode mode>
   class EvacuateNewSpacePageVisitor;
   class EvacuateNewSpaceVisitor;
   class EvacuateOldSpaceVisitor;
   class EvacuateRecordOnlyVisitor;
   class EvacuateVisitorBase;
   class HeapObjectVisitor;
+  class ObjectStatsVisitor;
 
   explicit MarkCompactCollector(Heap* heap);
 
   bool WillBeDeoptimized(Code* code);
-  void ClearInvalidRememberedSetSlots();
 
-  void ComputeEvacuationHeuristics(int area_size,
+  void ComputeEvacuationHeuristics(size_t area_size,
                                    int* target_fragmentation_percent,
-                                   int* max_evacuated_bytes);
+                                   size_t* max_evacuated_bytes);
+
+  void VisitAllObjects(HeapObjectVisitor* visitor);
+
+  void RecordObjectStats();
 
   // Finishes GC, performs heap verification if enabled.
   void Finish();
@@ -662,8 +631,10 @@ class MarkCompactCollector {
   friend class MarkCompactMarkingVisitor;
   friend class MarkingVisitor;
   friend class RecordMigratedSlotVisitor;
+  template <MarkCompactMode mode>
   friend class RootMarkingVisitor;
   friend class SharedFunctionInfoMarkingVisitor;
+  friend class StaticYoungGenerationMarkingVisitor;
 
   // Mark code objects that are active on the stack to prevent them
   // from being flushed.
@@ -673,6 +644,8 @@ class MarkCompactCollector {
 
   // Marking operations for objects reachable from roots.
   void MarkLiveObjects();
+  // Mark the young generation.
+  void MarkLiveObjectsInYoungGeneration();
 
   // Pushes a black object onto the marking stack and accounts for live bytes.
   // Note that this assumes live bytes have not yet been counted.
@@ -684,21 +657,18 @@ class MarkCompactCollector {
 
   // Marks the object black and pushes it on the marking stack.
   // This is for non-incremental marking only.
-  INLINE(void MarkObject(HeapObject* obj, MarkBit mark_bit));
-
-  // Marks the object black assuming that it is not yet marked.
-  // This is for non-incremental marking only.
-  INLINE(void SetMark(HeapObject* obj, MarkBit mark_bit));
+  INLINE(void MarkObject(HeapObject* obj));
 
   // Mark the heap roots and all objects reachable from them.
-  void MarkRoots(RootMarkingVisitor* visitor);
+  void MarkRoots(RootMarkingVisitor<MarkCompactMode::FULL>* visitor);
 
   // Mark the string table specially.  References to internalized strings from
   // the string table are weak.
-  void MarkStringTable(RootMarkingVisitor* visitor);
+  void MarkStringTable(RootMarkingVisitor<MarkCompactMode::FULL>* visitor);
 
   // Mark objects reachable (transitively) from objects in the marking stack
   // or overflowed in the heap.
+  template <MarkCompactMode mode>
   void ProcessMarkingDeque();
 
   // Mark objects reachable (transitively) from objects in the marking stack
@@ -722,11 +692,13 @@ class MarkCompactCollector {
   // stack.  This function empties the marking stack, but may leave
   // overflowed objects in the heap, in which case the marking stack's
   // overflow flag will be set.
+  template <MarkCompactMode mode>
   void EmptyMarkingDeque();
 
   // Refill the marking stack with overflowed objects from the heap.  This
   // function either leaves the marking stack full or clears the overflow
   // flag on the marking stack.
+  template <MarkCompactMode mode>
   void RefillMarkingDeque();
 
   // Helper methods for refilling the marking stack by discovering grey objects
@@ -777,24 +749,13 @@ class MarkCompactCollector {
 
   void AbortTransitionArrays();
 
-  // -----------------------------------------------------------------------
-  // Phase 2: Sweeping to clear mark bits and free non-live objects for
-  // a non-compacting collection.
-  //
-  //  Before: Live objects are marked and non-live objects are unmarked.
-  //
-  //   After: Live objects are unmarked, non-live regions have been added to
-  //          their space's free list. Active eden semispace is compacted by
-  //          evacuation.
-  //
+  // Starts sweeping of spaces by contributing on the main thread and setting
+  // up other pages for sweeping. Does not start sweeper tasks.
+  void StartSweepSpaces();
+  void StartSweepSpace(PagedSpace* space);
 
-  // If we are not compacting the heap, we simply sweep the spaces except
-  // for the large object space, clearing mark bits and adding unmarked
-  // regions to each space's free list.
-  void SweepSpaces();
-
-  void EvacuateNewSpacePrologue();
-
+  void EvacuatePrologue();
+  void EvacuateEpilogue();
   void EvacuatePagesInParallel();
 
   // The number of parallel compaction tasks, including the main thread.
@@ -810,15 +771,10 @@ class MarkCompactCollector {
   bool VisitLiveObjects(MemoryChunk* page, Visitor* visitor,
                         IterationMode mode);
 
-  void VisitLiveObjectsBody(Page* page, ObjectVisitor* visitor);
-
   void RecomputeLiveBytes(MemoryChunk* page);
 
   void ReleaseEvacuationCandidates();
 
-  // Starts sweeping of a space by contributing on the main thread and setting
-  // up other pages for sweeping.
-  void StartSweepSpace(PagedSpace* space);
 
 #ifdef DEBUG
   friend class MarkObjectVisitor;
@@ -847,8 +803,6 @@ class MarkCompactCollector {
   CollectorState state_;
 #endif
 
-  MarkingParity marking_parity_;
-
   bool was_marked_incrementally_;
 
   bool evacuation_;
@@ -861,17 +815,15 @@ class MarkCompactCollector {
 
   bool have_code_to_deoptimize_;
 
-  base::VirtualMemory* marking_deque_memory_;
-  size_t marking_deque_memory_committed_;
   MarkingDeque marking_deque_;
-  std::vector<std::pair<void*, void*>> wrappers_to_trace_;
 
   CodeFlusher* code_flusher_;
 
-  EmbedderHeapTracer* embedder_heap_tracer_;
-
+  // Candidates for pages that should be evacuated.
   List<Page*> evacuation_candidates_;
-  List<Page*> newspace_evacuation_candidates_;
+  // Pages that are actually processed during evacuation.
+  List<Page*> old_space_evacuation_pages_;
+  List<Page*> new_space_evacuation_pages_;
 
   Sweeper sweeper_;
 
@@ -893,8 +845,7 @@ class EvacuationScope BASE_EMBEDDED {
   MarkCompactCollector* collector_;
 };
 
-
-const char* AllocationSpaceName(AllocationSpace space);
+V8_EXPORT_PRIVATE const char* AllocationSpaceName(AllocationSpace space);
 }  // namespace internal
 }  // namespace v8
 

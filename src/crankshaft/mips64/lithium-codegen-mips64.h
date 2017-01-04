@@ -227,14 +227,14 @@ class LCodeGen: public LCodeGenBase {
   void RegisterEnvironmentForDeoptimization(LEnvironment* environment,
                                             Safepoint::DeoptMode mode);
   void DeoptimizeIf(Condition condition, LInstruction* instr,
-                    Deoptimizer::DeoptReason deopt_reason,
+                    DeoptimizeReason deopt_reason,
                     Deoptimizer::BailoutType bailout_type,
                     Register src1 = zero_reg,
                     const Operand& src2 = Operand(zero_reg));
-  void DeoptimizeIf(
-      Condition condition, LInstruction* instr,
-      Deoptimizer::DeoptReason deopt_reason = Deoptimizer::kNoReason,
-      Register src1 = zero_reg, const Operand& src2 = Operand(zero_reg));
+  void DeoptimizeIf(Condition condition, LInstruction* instr,
+                    DeoptimizeReason deopt_reason = DeoptimizeReason::kNoReason,
+                    Register src1 = zero_reg,
+                    const Operand& src2 = Operand(zero_reg));
 
   void AddToTranslation(LEnvironment* environment,
                         Translation* translation,
@@ -254,7 +254,7 @@ class LCodeGen: public LCodeGenBase {
   void EmitIntegerMathAbs(LMathAbs* instr);
   void EmitSmiMathAbs(LMathAbs* instr);
 
-  // Support for recording safepoint and position information.
+  // Support for recording safepoint information.
   void RecordSafepoint(LPointerMap* pointers,
                        Safepoint::Kind kind,
                        int arguments,
@@ -264,8 +264,6 @@ class LCodeGen: public LCodeGenBase {
   void RecordSafepointWithRegisters(LPointerMap* pointers,
                                     int arguments,
                                     Safepoint::DeoptMode mode);
-
-  void RecordAndWritePosition(int position) override;
 
   static Condition TokenToCondition(Token::Value op, bool is_unsigned);
   void EmitGoto(int block);
@@ -345,8 +343,6 @@ class LCodeGen: public LCodeGenBase {
 
   template <class T>
   void EmitVectorLoadICRegisters(T* instr);
-  template <class T>
-  void EmitVectorStoreICRegisters(T* instr);
 
   ZoneList<Deoptimizer::JumpTableEntry*> jump_table_;
   Scope* const scope_;
@@ -364,24 +360,9 @@ class LCodeGen: public LCodeGenBase {
 
   class PushSafepointRegistersScope final BASE_EMBEDDED {
    public:
-    explicit PushSafepointRegistersScope(LCodeGen* codegen)
-        : codegen_(codegen) {
-      DCHECK(codegen_->info()->is_calling());
-      DCHECK(codegen_->expected_safepoint_kind_ == Safepoint::kSimple);
-      codegen_->expected_safepoint_kind_ = Safepoint::kWithRegisters;
+    explicit PushSafepointRegistersScope(LCodeGen* codegen);
 
-      StoreRegistersStateStub stub(codegen_->isolate());
-      codegen_->masm_->push(ra);
-      codegen_->masm_->CallStub(&stub);
-    }
-
-    ~PushSafepointRegistersScope() {
-      DCHECK(codegen_->expected_safepoint_kind_ == Safepoint::kWithRegisters);
-      RestoreRegistersStateStub stub(codegen_->isolate());
-      codegen_->masm_->push(ra);
-      codegen_->masm_->CallStub(&stub);
-      codegen_->expected_safepoint_kind_ = Safepoint::kSimple;
-    }
+    ~PushSafepointRegistersScope();
 
    private:
     LCodeGen* codegen_;

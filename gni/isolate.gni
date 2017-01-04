@@ -12,11 +12,21 @@ declare_args() {
 }
 
 template("v8_isolate_run") {
+  forward_variables_from(invoker,
+                         "*",
+                         [
+                           "deps",
+                           "isolate",
+                         ])
+
   # Remember target name as within the action scope the target name will be
   # different.
   name = target_name
-  if (name != "" && invoker.isolate != "" && invoker.deps != [] &&
-      v8_test_isolation_mode != "noop") {
+
+  assert(defined(invoker.deps))
+  assert(defined(invoker.isolate))
+
+  if (name != "" && v8_test_isolation_mode != "noop") {
     action(name + "_run") {
       testonly = true
 
@@ -51,6 +61,11 @@ template("v8_isolate_run") {
       } else {
         asan = "0"
       }
+      if (is_lsan) {
+        lsan = "1"
+      } else {
+        lsan = "0"
+      }
       if (is_msan) {
         msan = "1"
       } else {
@@ -65,11 +80,6 @@ template("v8_isolate_run") {
         cfi_vptr = "1"
       } else {
         cfi_vptr = "0"
-      }
-      if (use_custom_libcxx) {
-        custom_libcxx = "1"
-      } else {
-        custom_libcxx = "0"
       }
       if (target_cpu == "x86") {
         target_arch = "ia32"
@@ -91,6 +101,11 @@ template("v8_isolate_run") {
       } else {
         icu_use_data_file_flag = "0"
       }
+      if (v8_enable_inspector) {
+        enable_inspector = "1"
+      } else {
+        enable_inspector = "0"
+      }
       if (v8_use_external_startup_data) {
         use_external_startup_data = "1"
       } else {
@@ -100,6 +115,16 @@ template("v8_isolate_run") {
         use_snapshot = "true"
       } else {
         use_snapshot = "false"
+      }
+      if (v8_has_valgrind) {
+        has_valgrind = "1"
+      } else {
+        has_valgrind = "0"
+      }
+      if (v8_gcmole) {
+        gcmole = "1"
+      } else {
+        gcmole = "0"
       }
 
       # Note, all paths will be rebased in isolate_driver.py to be relative to
@@ -130,11 +155,15 @@ template("v8_isolate_run") {
         "--config-variable",
         "cfi_vptr=$cfi_vptr",
         "--config-variable",
-        "gcmole=0",
+        "gcmole=$gcmole",
         "--config-variable",
-        "has_valgrind=0",
+        "has_valgrind=$has_valgrind",
         "--config-variable",
         "icu_use_data_file_flag=$icu_use_data_file_flag",
+        "--config-variable",
+        "is_gn=1",
+        "--config-variable",
+        "lsan=$lsan",
         "--config-variable",
         "msan=$msan",
         "--config-variable",
@@ -148,7 +177,7 @@ template("v8_isolate_run") {
         "--config-variable",
         "target_arch=$target_arch",
         "--config-variable",
-        "use_custom_libcxx=$custom_libcxx",
+        "v8_enable_inspector=$enable_inspector",
         "--config-variable",
         "v8_use_external_startup_data=$use_external_startup_data",
         "--config-variable",
@@ -158,7 +187,7 @@ template("v8_isolate_run") {
       if (is_win) {
         args += [
           "--config-variable",
-          "msvs_version=2013",
+          "msvs_version=2015",
         ]
       } else {
         args += [

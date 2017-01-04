@@ -6,7 +6,9 @@
 #define V8_COMPILER_NODE_PROPERTIES_H_
 
 #include "src/compiler/node.h"
-#include "src/types.h"
+#include "src/compiler/types.h"
+#include "src/globals.h"
+#include "src/zone/zone-handle-set.h"
 
 namespace v8 {
 namespace internal {
@@ -17,7 +19,7 @@ class Operator;
 class CommonOperatorBuilder;
 
 // A facade that simplifies access to the different kinds of inputs to a node.
-class NodeProperties final {
+class V8_EXPORT_PRIVATE NodeProperties final {
  public:
   // ---------------------------------------------------------------------------
   // Input layout.
@@ -41,7 +43,7 @@ class NodeProperties final {
 
   static Node* GetValueInput(Node* node, int index);
   static Node* GetContextInput(Node* node);
-  static Node* GetFrameStateInput(Node* node, int index);
+  static Node* GetFrameStateInput(Node* node);
   static Node* GetEffectInput(Node* node, int index = 0);
   static Node* GetControlInput(Node* node, int index = 0);
 
@@ -83,7 +85,7 @@ class NodeProperties final {
   static void ReplaceContextInput(Node* node, Node* context);
   static void ReplaceControlInput(Node* node, Node* control, int index = 0);
   static void ReplaceEffectInput(Node* node, Node* effect, int index = 0);
-  static void ReplaceFrameStateInput(Node* node, int index, Node* frame_state);
+  static void ReplaceFrameStateInput(Node* node, Node* frame_state);
   static void RemoveNonValueInputs(Node* node);
   static void RemoveValueInputs(Node* node);
 
@@ -122,6 +124,20 @@ class NodeProperties final {
   //  - Switch: [ IfValue, ..., IfDefault ]
   static void CollectControlProjections(Node* node, Node** proj, size_t count);
 
+  // Checks if two nodes are the same, looking past {CheckHeapObject}.
+  static bool IsSame(Node* a, Node* b);
+
+  // Walks up the {effect} chain to find a witness that provides map
+  // information about the {receiver}. Can look through potentially
+  // side effecting nodes.
+  enum InferReceiverMapsResult {
+    kNoReceiverMaps,         // No receiver maps inferred.
+    kReliableReceiverMaps,   // Receiver maps can be trusted.
+    kUnreliableReceiverMaps  // Receiver maps might have changed (side-effect).
+  };
+  static InferReceiverMapsResult InferReceiverMaps(
+      Node* receiver, Node* effect, ZoneHandleSet<Map>* maps_return);
+
   // ---------------------------------------------------------------------------
   // Context.
 
@@ -131,17 +147,10 @@ class NodeProperties final {
   static MaybeHandle<Context> GetSpecializationContext(
       Node* node, MaybeHandle<Context> context = MaybeHandle<Context>());
 
-  // Try to retrieve the specialization native context from the given
-  // {node}, optionally utilizing the knowledge about the (outermost)
-  // {native_context}.
-  static MaybeHandle<Context> GetSpecializationNativeContext(
-      Node* node, MaybeHandle<Context> native_context = MaybeHandle<Context>());
-
-  // Try to retrieve the specialization global object from the given
-  // {node}, optionally utilizing the knowledge about the (outermost)
-  // {native_context}.
-  static MaybeHandle<JSGlobalObject> GetSpecializationGlobalObject(
-      Node* node, MaybeHandle<Context> native_context = MaybeHandle<Context>());
+  // Walk up the context chain from the given {node} until we reduce the {depth}
+  // to 0 or hit a node that does not extend the context chain ({depth} will be
+  // updated accordingly).
+  static Node* GetOuterContext(Node* node, size_t* depth);
 
   // ---------------------------------------------------------------------------
   // Type.

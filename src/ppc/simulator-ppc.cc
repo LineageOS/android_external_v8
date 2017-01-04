@@ -36,7 +36,6 @@ const auto GetRegConfig = RegisterConfiguration::Crankshaft;
 class PPCDebugger {
  public:
   explicit PPCDebugger(Simulator* sim) : sim_(sim) {}
-  ~PPCDebugger();
 
   void Stop(Instruction* instr);
   void Debug();
@@ -63,53 +62,6 @@ class PPCDebugger {
   void RedoBreakpoints();
 };
 
-
-PPCDebugger::~PPCDebugger() {}
-
-
-#ifdef GENERATED_CODE_COVERAGE
-static FILE* coverage_log = NULL;
-
-
-static void InitializeCoverage() {
-  char* file_name = getenv("V8_GENERATED_CODE_COVERAGE_LOG");
-  if (file_name != NULL) {
-    coverage_log = fopen(file_name, "aw+");
-  }
-}
-
-
-void PPCDebugger::Stop(Instruction* instr) {
-  // Get the stop code.
-  uint32_t code = instr->SvcValue() & kStopCodeMask;
-  // Retrieve the encoded address, which comes just after this stop.
-  char** msg_address =
-      reinterpret_cast<char**>(sim_->get_pc() + Instruction::kInstrSize);
-  char* msg = *msg_address;
-  DCHECK(msg != NULL);
-
-  // Update this stop description.
-  if (isWatchedStop(code) && !watched_stops_[code].desc) {
-    watched_stops_[code].desc = msg;
-  }
-
-  if (strlen(msg) > 0) {
-    if (coverage_log != NULL) {
-      fprintf(coverage_log, "%s\n", msg);
-      fflush(coverage_log);
-    }
-    // Overwrite the instruction and address with nops.
-    instr->SetInstructionBits(kNopInstr);
-    reinterpret_cast<Instruction*>(msg_address)->SetInstructionBits(kNopInstr);
-  }
-  sim_->set_pc(sim_->get_pc() + Instruction::kInstrSize + kPointerSize);
-}
-
-#else  // ndef GENERATED_CODE_COVERAGE
-
-static void InitializeCoverage() {}
-
-
 void PPCDebugger::Stop(Instruction* instr) {
   // Get the stop code.
   // use of kStopCodeMask not right on PowerPC
@@ -130,8 +82,6 @@ void PPCDebugger::Stop(Instruction* instr) {
   sim_->set_pc(sim_->get_pc() + Instruction::kInstrSize + kPointerSize);
   Debug();
 }
-#endif
-
 
 intptr_t PPCDebugger::GetRegisterValue(int regnum) {
   return sim_->get_register(regnum);
@@ -708,9 +658,8 @@ void Simulator::set_last_debugger_input(char* input) {
   last_debugger_input_ = input;
 }
 
-
-void Simulator::FlushICache(base::HashMap* i_cache, void* start_addr,
-                            size_t size) {
+void Simulator::FlushICache(base::CustomMatcherHashMap* i_cache,
+                            void* start_addr, size_t size) {
   intptr_t start = reinterpret_cast<intptr_t>(start_addr);
   int intra_line = (start & CachePage::kLineMask);
   start -= intra_line;
@@ -730,8 +679,8 @@ void Simulator::FlushICache(base::HashMap* i_cache, void* start_addr,
   }
 }
 
-
-CachePage* Simulator::GetCachePage(base::HashMap* i_cache, void* page) {
+CachePage* Simulator::GetCachePage(base::CustomMatcherHashMap* i_cache,
+                                   void* page) {
   base::HashMap::Entry* entry = i_cache->LookupOrInsert(page, ICacheHash(page));
   if (entry->value == NULL) {
     CachePage* new_page = new CachePage();
@@ -742,7 +691,8 @@ CachePage* Simulator::GetCachePage(base::HashMap* i_cache, void* page) {
 
 
 // Flush from start up to and not including start + size.
-void Simulator::FlushOnePage(base::HashMap* i_cache, intptr_t start, int size) {
+void Simulator::FlushOnePage(base::CustomMatcherHashMap* i_cache,
+                             intptr_t start, int size) {
   DCHECK(size <= CachePage::kPageSize);
   DCHECK(AllOnOnePage(start, size - 1));
   DCHECK((start & CachePage::kLineMask) == 0);
@@ -754,7 +704,8 @@ void Simulator::FlushOnePage(base::HashMap* i_cache, intptr_t start, int size) {
   memset(valid_bytemap, CachePage::LINE_INVALID, size >> CachePage::kLineShift);
 }
 
-void Simulator::CheckICache(base::HashMap* i_cache, Instruction* instr) {
+void Simulator::CheckICache(base::CustomMatcherHashMap* i_cache,
+                            Instruction* instr) {
   intptr_t address = reinterpret_cast<intptr_t>(instr);
   void* page = reinterpret_cast<void*>(address & (~CachePage::kPageMask));
   void* line = reinterpret_cast<void*>(address & (~CachePage::kLineMask));
@@ -787,7 +738,7 @@ void Simulator::Initialize(Isolate* isolate) {
 Simulator::Simulator(Isolate* isolate) : isolate_(isolate) {
   i_cache_ = isolate_->simulator_i_cache();
   if (i_cache_ == NULL) {
-    i_cache_ = new base::HashMap(&ICacheMatch);
+    i_cache_ = new base::CustomMatcherHashMap(&ICacheMatch);
     isolate_->set_simulator_i_cache(i_cache_);
   }
   Initialize(isolate);
@@ -826,7 +777,6 @@ Simulator::Simulator(Isolate* isolate) : isolate_(isolate) {
   // some buffer below.
   registers_[sp] =
       reinterpret_cast<intptr_t>(stack_) + stack_size - stack_protection_size_;
-  InitializeCoverage();
 
   last_debugger_input_ = NULL;
 }
@@ -923,7 +873,8 @@ class Redirection {
 
 
 // static
-void Simulator::TearDown(base::HashMap* i_cache, Redirection* first) {
+void Simulator::TearDown(base::CustomMatcherHashMap* i_cache,
+                         Redirection* first) {
   Redirection::DeleteChain(first);
   if (i_cache != nullptr) {
     for (base::HashMap::Entry* entry = i_cache->Start(); entry != nullptr;
@@ -1672,7 +1623,8 @@ void Simulator::ExecuteBranchConditional(Instruction* instr, BCType type) {
 
 // Handle execution based on instruction types.
 void Simulator::ExecuteExt1(Instruction* instr) {
-  switch (instr->Bits(10, 1) << 1) {
+  uint32_t opcode = EXT1 | instr->BitField(10, 1);
+  switch (opcode) {
     case MCRF:
       UNIMPLEMENTED();  // Not used by V8.
     case BCLRX:
@@ -1727,7 +1679,7 @@ void Simulator::ExecuteExt1(Instruction* instr) {
 bool Simulator::ExecuteExt2_10bit(Instruction* instr) {
   bool found = true;
 
-  int opcode = instr->Bits(10, 1) << 1;
+  uint32_t opcode = EXT2 | instr->BitField(10, 1);
   switch (opcode) {
     case SRWX: {
       int rs = instr->RSValue();
@@ -1754,6 +1706,60 @@ bool Simulator::ExecuteExt2_10bit(Instruction* instr) {
       if (instr->Bit(0)) {  // RC bit set
         SetCR0(result);
       }
+      break;
+    }
+#endif
+    case MODUW: {
+      int rt = instr->RTValue();
+      int ra = instr->RAValue();
+      int rb = instr->RBValue();
+      uint32_t ra_val = get_register(ra);
+      uint32_t rb_val = get_register(rb);
+      uint32_t alu_out = (rb_val == 0) ? -1 : ra_val % rb_val;
+      set_register(rt, alu_out);
+      break;
+    }
+#if V8_TARGET_ARCH_PPC64
+    case MODUD: {
+      int rt = instr->RTValue();
+      int ra = instr->RAValue();
+      int rb = instr->RBValue();
+      uint64_t ra_val = get_register(ra);
+      uint64_t rb_val = get_register(rb);
+      uint64_t alu_out = (rb_val == 0) ? -1 : ra_val % rb_val;
+      set_register(rt, alu_out);
+      break;
+    }
+#endif
+    case MODSW: {
+      int rt = instr->RTValue();
+      int ra = instr->RAValue();
+      int rb = instr->RBValue();
+      int32_t ra_val = get_register(ra);
+      int32_t rb_val = get_register(rb);
+      bool overflow = (ra_val == kMinInt && rb_val == -1);
+      // result is undefined if divisor is zero or if operation
+      // is 0x80000000 / -1.
+      int32_t alu_out = (rb_val == 0 || overflow) ? -1 : ra_val % rb_val;
+      set_register(rt, alu_out);
+      break;
+    }
+#if V8_TARGET_ARCH_PPC64
+    case MODSD: {
+      int rt = instr->RTValue();
+      int ra = instr->RAValue();
+      int rb = instr->RBValue();
+      int64_t ra_val = get_register(ra);
+      int64_t rb_val = get_register(rb);
+      int64_t one = 1;  // work-around gcc
+      int64_t kMinLongLong = (one << 63);
+      // result is undefined if divisor is zero or if operation
+      // is 0x80000000_00000000 / -1.
+      int64_t alu_out =
+          (rb_val == 0 || (ra_val == kMinLongLong && rb_val == -1))
+              ? -1
+              : ra_val % rb_val;
+      set_register(rt, alu_out);
       break;
     }
 #endif
@@ -1944,7 +1950,7 @@ bool Simulator::ExecuteExt2_10bit(Instruction* instr) {
   if (found) return found;
 
   found = true;
-  opcode = instr->Bits(10, 2) << 2;
+  opcode = EXT2 | instr->BitField(10, 2);
   switch (opcode) {
     case SRADIX: {
       int ra = instr->RAValue();
@@ -1971,7 +1977,7 @@ bool Simulator::ExecuteExt2_10bit(Instruction* instr) {
 bool Simulator::ExecuteExt2_9bit_part1(Instruction* instr) {
   bool found = true;
 
-  int opcode = instr->Bits(9, 1) << 1;
+  uint32_t opcode = EXT2 | instr->BitField(9, 1);
   switch (opcode) {
     case TW: {
       // used for call redirection in simulation mode
@@ -2229,7 +2235,7 @@ bool Simulator::ExecuteExt2_9bit_part1(Instruction* instr) {
 
 bool Simulator::ExecuteExt2_9bit_part2(Instruction* instr) {
   bool found = true;
-  int opcode = instr->Bits(9, 1) << 1;
+  uint32_t opcode = EXT2 | instr->BitField(9, 1);
   switch (opcode) {
     case CNTLZWX: {
       int rs = instr->RSValue();
@@ -2747,7 +2753,7 @@ bool Simulator::ExecuteExt2_9bit_part2(Instruction* instr) {
 
 
 void Simulator::ExecuteExt2_5bit(Instruction* instr) {
-  int opcode = instr->Bits(5, 1) << 1;
+  uint32_t opcode = EXT2 | instr->BitField(5, 1);
   switch (opcode) {
     case ISEL: {
       int rt = instr->RTValue();
@@ -2780,9 +2786,9 @@ void Simulator::ExecuteExt2(Instruction* instr) {
 
 
 void Simulator::ExecuteExt3(Instruction* instr) {
-  int opcode = instr->Bits(10, 1) << 1;
+  uint32_t opcode = EXT3 | instr->BitField(10, 1);
   switch (opcode) {
-    case FCFID: {
+    case FCFIDS: {
       // fcfids
       int frt = instr->RTValue();
       int frb = instr->RBValue();
@@ -2791,7 +2797,7 @@ void Simulator::ExecuteExt3(Instruction* instr) {
       set_d_register_from_double(frt, frt_val);
       return;
     }
-    case FCFIDU: {
+    case FCFIDUS: {
       // fcfidus
       int frt = instr->RTValue();
       int frb = instr->RBValue();
@@ -2806,7 +2812,8 @@ void Simulator::ExecuteExt3(Instruction* instr) {
 
 
 void Simulator::ExecuteExt4(Instruction* instr) {
-  switch (instr->Bits(5, 1) << 1) {
+  uint32_t opcode = EXT4 | instr->BitField(5, 1);
+  switch (opcode) {
     case FDIV: {
       int frt = instr->RTValue();
       int fra = instr->RAValue();
@@ -2893,7 +2900,7 @@ void Simulator::ExecuteExt4(Instruction* instr) {
       return;
     }
   }
-  int opcode = instr->Bits(10, 1) << 1;
+  opcode = EXT4 | instr->BitField(10, 1);
   switch (opcode) {
     case FCMPU: {
       int fra = instr->RAValue();
@@ -3231,7 +3238,8 @@ void Simulator::ExecuteExt4(Instruction* instr) {
 
 #if V8_TARGET_ARCH_PPC64
 void Simulator::ExecuteExt5(Instruction* instr) {
-  switch (instr->Bits(4, 2) << 2) {
+  uint32_t opcode = EXT5 | instr->BitField(4, 2);
+  switch (opcode) {
     case RLDICL: {
       int ra = instr->RAValue();
       int rs = instr->RSValue();
@@ -3319,7 +3327,8 @@ void Simulator::ExecuteExt5(Instruction* instr) {
       return;
     }
   }
-  switch (instr->Bits(4, 1) << 1) {
+  opcode = EXT5 | instr->BitField(4, 1);
+  switch (opcode) {
     case RLDCL: {
       int ra = instr->RAValue();
       int rs = instr->RSValue();
@@ -3344,9 +3353,55 @@ void Simulator::ExecuteExt5(Instruction* instr) {
 }
 #endif
 
+void Simulator::ExecuteExt6(Instruction* instr) {
+  uint32_t opcode = EXT6 | instr->BitField(10, 3);
+  switch (opcode) {
+    case XSADDDP: {
+      int frt = instr->RTValue();
+      int fra = instr->RAValue();
+      int frb = instr->RBValue();
+      double fra_val = get_double_from_d_register(fra);
+      double frb_val = get_double_from_d_register(frb);
+      double frt_val = fra_val + frb_val;
+      set_d_register_from_double(frt, frt_val);
+      return;
+    }
+    case XSSUBDP: {
+      int frt = instr->RTValue();
+      int fra = instr->RAValue();
+      int frb = instr->RBValue();
+      double fra_val = get_double_from_d_register(fra);
+      double frb_val = get_double_from_d_register(frb);
+      double frt_val = fra_val - frb_val;
+      set_d_register_from_double(frt, frt_val);
+      return;
+    }
+    case XSMULDP: {
+      int frt = instr->RTValue();
+      int fra = instr->RAValue();
+      int frb = instr->RBValue();
+      double fra_val = get_double_from_d_register(fra);
+      double frb_val = get_double_from_d_register(frb);
+      double frt_val = fra_val * frb_val;
+      set_d_register_from_double(frt, frt_val);
+      return;
+    }
+    case XSDIVDP: {
+      int frt = instr->RTValue();
+      int fra = instr->RAValue();
+      int frb = instr->RBValue();
+      double fra_val = get_double_from_d_register(fra);
+      double frb_val = get_double_from_d_register(frb);
+      double frt_val = fra_val / frb_val;
+      set_d_register_from_double(frt, frt_val);
+      return;
+    }
+  }
+  UNIMPLEMENTED();  // Not used by V8.
+}
 
 void Simulator::ExecuteGeneric(Instruction* instr) {
-  int opcode = instr->OpcodeValue() << 26;
+  uint32_t opcode = instr->OpcodeField();
   switch (opcode) {
     case SUBFIC: {
       int rt = instr->RTValue();
@@ -3750,7 +3805,16 @@ void Simulator::ExecuteGeneric(Instruction* instr) {
       intptr_t ra_val = ra == 0 ? 0 : get_register(ra);
       int32_t val = ReadW(ra_val + offset, instr);
       float* fptr = reinterpret_cast<float*>(&val);
-      set_d_register_from_double(frt, static_cast<double>(*fptr));
+// Conversion using double changes sNan to qNan on ia32/x64
+#if V8_HOST_ARCH_IA32 || V8_HOST_ARCH_X64
+      if (val == 0x7fa00000) {
+        set_d_register(frt, 0x7ff4000000000000);
+      } else {
+#endif
+        set_d_register_from_double(frt, static_cast<double>(*fptr));
+#if V8_HOST_ARCH_IA32 || V8_HOST_ARCH_X64
+      }
+#endif
       if (opcode == LFSU) {
         DCHECK(ra != 0);
         set_register(ra, ra_val + offset);
@@ -3780,7 +3844,19 @@ void Simulator::ExecuteGeneric(Instruction* instr) {
         int32_t offset = SIGN_EXT_IMM16(instr->Bits(15, 0));
         intptr_t ra_val = ra == 0 ? 0 : get_register(ra);
         float frs_val = static_cast<float>(get_double_from_d_register(frs));
-        int32_t* p = reinterpret_cast<int32_t*>(&frs_val);
+        int32_t* p;
+// Conversion using double changes sNan to qNan on ia32/x64
+#if V8_HOST_ARCH_IA32 || V8_HOST_ARCH_X64
+        int64_t frs_isnan = get_d_register(frs);
+        int32_t frs_nan_single = 0x7fa00000;
+        if (frs_isnan == 0x7ff4000000000000) {
+          p = &frs_nan_single;
+        } else {
+#endif
+          p = reinterpret_cast<int32_t*>(&frs_val);
+#if V8_HOST_ARCH_IA32 || V8_HOST_ARCH_X64
+        }
+#endif
         WriteW(ra_val + offset, *p, instr);
         if (opcode == STFSU) {
           DCHECK(ra != 0);
@@ -3859,6 +3935,10 @@ void Simulator::ExecuteGeneric(Instruction* instr) {
       break;
     }
 #endif
+    case EXT6: {
+      ExecuteExt6(instr);
+      break;
+    }
 
     default: {
       UNIMPLEMENTED();
@@ -3888,7 +3968,7 @@ void Simulator::ExecuteInstruction(Instruction* instr) {
   if (::v8::internal::FLAG_trace_sim) {
     Trace(instr);
   }
-  int opcode = instr->OpcodeValue() << 26;
+  uint32_t opcode = instr->OpcodeField();
   if (opcode == TWI) {
     SoftwareInterrupt(instr);
   } else {
