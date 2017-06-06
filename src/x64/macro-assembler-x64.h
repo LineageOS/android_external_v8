@@ -10,6 +10,7 @@
 #include "src/base/flags.h"
 #include "src/frames.h"
 #include "src/globals.h"
+#include "src/x64/assembler-x64.h"
 #include "src/x64/frames-x64.h"
 
 namespace v8 {
@@ -323,10 +324,8 @@ class MacroAssembler: public Assembler {
       PointersToHereCheck pointers_to_here_check_for_value =
           kPointersToHereMaybeInteresting);
 
-  // ---------------------------------------------------------------------------
-  // Debugger Support
-
-  void DebugBreak();
+  // Frame restart support.
+  void MaybeDropFrames();
 
   // Generates function and stub prologue code.
   void StubPrologue(StackFrame::Type type);
@@ -339,7 +338,8 @@ class MacroAssembler: public Assembler {
   //
   // Allocates arg_stack_space * kPointerSize memory (not GCed) on the stack
   // accessible via StackSpaceOperand.
-  void EnterExitFrame(int arg_stack_space = 0, bool save_doubles = false);
+  void EnterExitFrame(int arg_stack_space = 0, bool save_doubles = false,
+                      StackFrame::Type frame_type = StackFrame::EXIT);
 
   // Enter specific kind of exit frame. Allocates arg_stack_space * kPointerSize
   // memory (not GCed) on the stack accessible via StackSpaceOperand.
@@ -389,9 +389,10 @@ class MacroAssembler: public Assembler {
                           const ParameterCount& actual, InvokeFlag flag,
                           const CallWrapper& call_wrapper);
 
-  void FloodFunctionIfStepping(Register fun, Register new_target,
-                               const ParameterCount& expected,
-                               const ParameterCount& actual);
+  // On function call, call into the debugger if necessary.
+  void CheckDebugHook(Register fun, Register new_target,
+                      const ParameterCount& expected,
+                      const ParameterCount& actual);
 
   // Invoke the JavaScript function in the given register. Changes the
   // current context to the context in the function before invoking.
@@ -547,6 +548,10 @@ class MacroAssembler: public Assembler {
   // Jump to label if the value is not a tagged smi.
   void JumpIfNotSmi(Register src,
                     Label* on_not_smi,
+                    Label::Distance near_jump = Label::kFar);
+
+  // Jump to label if the value is not a tagged smi.
+  void JumpIfNotSmi(Operand src, Label* on_not_smi,
                     Label::Distance near_jump = Label::kFar);
 
   // Jump to label if the value is not a non-negative tagged smi.
@@ -890,6 +895,18 @@ class MacroAssembler: public Assembler {
   // miss label if the weak cell was cleared.
   void LoadWeakValue(Register value, Handle<WeakCell> cell, Label* miss);
 
+  // Emit code that loads |parameter_index|'th parameter from the stack to
+  // the register according to the CallInterfaceDescriptor definition.
+  // |sp_to_caller_sp_offset_in_words| specifies the number of words pushed
+  // below the caller's sp (on x64 it's at least return address).
+  template <class Descriptor>
+  void LoadParameterFromStack(
+      Register reg, typename Descriptor::ParameterIndices parameter_index,
+      int sp_to_ra_offset_in_words = 1) {
+    DCHECK(Descriptor::kPassLastArgsOnStack);
+    UNIMPLEMENTED();
+  }
+
   // Emit code to discard a non-negative number of pointer-sized elements
   // from the stack, clobbering only the rsp register.
   void Drop(int stack_elements);
@@ -927,7 +944,6 @@ class MacroAssembler: public Assembler {
     AllowDeferredHandleDereference using_raw_address;
     DCHECK(!RelocInfo::IsNone(rmode));
     DCHECK(value->IsHeapObject());
-    DCHECK(!isolate()->heap()->InNewSpace(*value));
     movp(dst, reinterpret_cast<void*>(value.location()), rmode);
   }
 
@@ -956,10 +972,24 @@ class MacroAssembler: public Assembler {
   AVX_OP2_XO(Addsd, addsd)
   AVX_OP2_XO(Subsd, subsd)
   AVX_OP2_XO(Mulsd, mulsd)
+  AVX_OP2_XO(Divss, divss)
   AVX_OP2_XO(Divsd, divsd)
-  AVX_OP2_X(Andpd, andpd)
-  AVX_OP2_X(Orpd, orpd)
-  AVX_OP2_X(Xorpd, xorpd)
+  AVX_OP2_XO(Andps, andps)
+  AVX_OP2_XO(Andpd, andpd)
+  AVX_OP2_XO(Orpd, orpd)
+  AVX_OP2_XO(Xorpd, xorpd)
+  AVX_OP2_XO(Cmpeqps, cmpeqps)
+  AVX_OP2_XO(Cmpltps, cmpltps)
+  AVX_OP2_XO(Cmpleps, cmpleps)
+  AVX_OP2_XO(Cmpneqps, cmpneqps)
+  AVX_OP2_XO(Cmpnltps, cmpnltps)
+  AVX_OP2_XO(Cmpnleps, cmpnleps)
+  AVX_OP2_XO(Cmpeqpd, cmpeqpd)
+  AVX_OP2_XO(Cmpltpd, cmpltpd)
+  AVX_OP2_XO(Cmplepd, cmplepd)
+  AVX_OP2_XO(Cmpneqpd, cmpneqpd)
+  AVX_OP2_XO(Cmpnltpd, cmpnltpd)
+  AVX_OP2_XO(Cmpnlepd, cmpnlepd)
   AVX_OP2_X(Pcmpeqd, pcmpeqd)
   AVX_OP2_WITH_TYPE(Psllq, psllq, byte)
   AVX_OP2_WITH_TYPE(Psrlq, psrlq, byte)
@@ -983,8 +1013,17 @@ class MacroAssembler: public Assembler {
   void Movq(Register dst, XMMRegister src);
 
   void Movaps(XMMRegister dst, XMMRegister src);
+  void Movups(XMMRegister dst, XMMRegister src);
+  void Movups(XMMRegister dst, const Operand& src);
+  void Movups(const Operand& dst, XMMRegister src);
+  void Movmskps(Register dst, XMMRegister src);
   void Movapd(XMMRegister dst, XMMRegister src);
+  void Movupd(XMMRegister dst, const Operand& src);
+  void Movupd(const Operand& dst, XMMRegister src);
   void Movmskpd(Register dst, XMMRegister src);
+
+  void Xorps(XMMRegister dst, XMMRegister src);
+  void Xorps(XMMRegister dst, const Operand& src);
 
   void Roundss(XMMRegister dst, XMMRegister src, RoundingMode mode);
   void Roundsd(XMMRegister dst, XMMRegister src, RoundingMode mode);
@@ -995,6 +1034,13 @@ class MacroAssembler: public Assembler {
   void Ucomiss(XMMRegister src1, const Operand& src2);
   void Ucomisd(XMMRegister src1, XMMRegister src2);
   void Ucomisd(XMMRegister src1, const Operand& src2);
+
+  // ---------------------------------------------------------------------------
+  // SIMD macros.
+  void Absps(XMMRegister dst);
+  void Negps(XMMRegister dst);
+  void Abspd(XMMRegister dst);
+  void Negpd(XMMRegister dst);
 
   // Control Flow
   void Jump(Address destination, RelocInfo::Mode rmode);
@@ -1069,35 +1115,6 @@ class MacroAssembler: public Assembler {
   // Compare instance type for map.
   // Always use unsigned comparisons: above and below, not less and greater.
   void CmpInstanceType(Register map, InstanceType type);
-
-  // Check if a map for a JSObject indicates that the object has fast elements.
-  // Jump to the specified label if it does not.
-  void CheckFastElements(Register map,
-                         Label* fail,
-                         Label::Distance distance = Label::kFar);
-
-  // Check if a map for a JSObject indicates that the object can have both smi
-  // and HeapObject elements.  Jump to the specified label if it does not.
-  void CheckFastObjectElements(Register map,
-                               Label* fail,
-                               Label::Distance distance = Label::kFar);
-
-  // Check if a map for a JSObject indicates that the object has fast smi only
-  // elements.  Jump to the specified label if it does not.
-  void CheckFastSmiElements(Register map,
-                            Label* fail,
-                            Label::Distance distance = Label::kFar);
-
-  // Check to see if maybe_number can be stored as a double in
-  // FastDoubleElements. If it can, store it at the index specified by index in
-  // the FastDoubleElements array elements, otherwise jump to fail.  Note that
-  // index must not be smi-tagged.
-  void StoreNumberToDoubleElements(Register maybe_number,
-                                   Register elements,
-                                   Register index,
-                                   XMMRegister xmm_scratch,
-                                   Label* fail,
-                                   int elements_offset = 0);
 
   // Compare an object's map with the specified map.
   void CompareMap(Register obj, Handle<Map> map);
@@ -1253,24 +1270,7 @@ class MacroAssembler: public Assembler {
   // ---------------------------------------------------------------------------
   // Inline caching support
 
-  // Generate code for checking access rights - used for security checks
-  // on access to global objects across environments. The holder register
-  // is left untouched, but the scratch register and kScratchRegister,
-  // which must be different, are clobbered.
-  void CheckAccessGlobalProxy(Register holder_reg,
-                              Register scratch,
-                              Label* miss);
-
   void GetNumberHash(Register r0, Register scratch);
-
-  void LoadFromNumberDictionary(Label* miss,
-                                Register elements,
-                                Register key,
-                                Register r0,
-                                Register r1,
-                                Register r2,
-                                Register result);
-
 
   // ---------------------------------------------------------------------------
   // Allocation support
@@ -1325,36 +1325,6 @@ class MacroAssembler: public Assembler {
                           Label* gc_required,
                           MutableMode mode = IMMUTABLE);
 
-  // Allocate a sequential string. All the header fields of the string object
-  // are initialized.
-  void AllocateTwoByteString(Register result,
-                             Register length,
-                             Register scratch1,
-                             Register scratch2,
-                             Register scratch3,
-                             Label* gc_required);
-  void AllocateOneByteString(Register result, Register length,
-                             Register scratch1, Register scratch2,
-                             Register scratch3, Label* gc_required);
-
-  // Allocate a raw cons string object. Only the map field of the result is
-  // initialized.
-  void AllocateTwoByteConsString(Register result,
-                          Register scratch1,
-                          Register scratch2,
-                          Label* gc_required);
-  void AllocateOneByteConsString(Register result, Register scratch1,
-                                 Register scratch2, Label* gc_required);
-
-  // Allocate a raw sliced string object. Only the map field of the result is
-  // initialized.
-  void AllocateTwoByteSlicedString(Register result,
-                            Register scratch1,
-                            Register scratch2,
-                            Label* gc_required);
-  void AllocateOneByteSlicedString(Register result, Register scratch1,
-                                   Register scratch2, Label* gc_required);
-
   // Allocate and initialize a JSValue wrapper with the specified {constructor}
   // and {value}.
   void AllocateJSValue(Register result, Register constructor, Register value,
@@ -1381,19 +1351,6 @@ class MacroAssembler: public Assembler {
   // |temp| holds |result|'s map when done.
   void GetMapConstructor(Register result, Register map, Register temp);
 
-  // Try to get function prototype of a function and puts the value in
-  // the result register. Checks that the function really is a
-  // function and jumps to the miss label if the fast checks fail. The
-  // function register will be untouched; the other register may be
-  // clobbered.
-  void TryGetFunctionPrototype(Register function, Register result, Label* miss);
-
-  // Picks out an array index from the hash field.
-  // Register use:
-  //   hash - holds the index's hash. Clobbered.
-  //   index - holds the overwritten index on exit.
-  void IndexFromHash(Register hash, Register index);
-
   // Find the function context up the context chain.
   void LoadContext(Register dst, int context_chain_length);
 
@@ -1406,17 +1363,6 @@ class MacroAssembler: public Assembler {
   void LoadGlobalProxy(Register dst) {
     LoadNativeContextSlot(Context::GLOBAL_PROXY_INDEX, dst);
   }
-
-  // Conditionally load the cached Array transitioned map of type
-  // transitioned_kind from the native context if the map in register
-  // map_in_out is the cached Array map in the native context of
-  // expected_kind.
-  void LoadTransitionedArrayMapConditional(
-      ElementsKind expected_kind,
-      ElementsKind transitioned_kind,
-      Register map_in_out,
-      Register scratch,
-      Label* no_map_match);
 
   // Load the native context slot with the current index.
   void LoadNativeContextSlot(int index, Register dst);
@@ -1469,7 +1415,8 @@ class MacroAssembler: public Assembler {
   void TailCallRuntime(Runtime::FunctionId fid);
 
   // Jump to a runtime routines
-  void JumpToExternalReference(const ExternalReference& ext);
+  void JumpToExternalReference(const ExternalReference& ext,
+                               bool builtin_exit_frame = false);
 
   // Before calling a C-function from generated code, align arguments on stack.
   // After aligning the frame, arguments must be stored in rsp[0], rsp[8],
@@ -1505,18 +1452,6 @@ class MacroAssembler: public Assembler {
     DCHECK(!code_object_.is_null());
     return code_object_;
   }
-
-  // Copy length bytes from source to destination.
-  // Uses scratch register internally (if you have a low-eight register
-  // free, do use it, otherwise kScratchRegister will be used).
-  // The min_length is a minimum limit on the value that length will have.
-  // The algorithm has some special cases that might be omitted if the string
-  // is known to always be long.
-  void CopyBytes(Register destination,
-                 Register source,
-                 Register length,
-                 int min_length = 0,
-                 Register scratch = kScratchRegister);
 
   // Initialize fields with filler values.  Fields starting at |current_address|
   // not including |end_address| are overwritten with the value in |filler|.  At
@@ -1567,12 +1502,15 @@ class MacroAssembler: public Assembler {
   }
 
   // Load the type feedback vector from a JavaScript frame.
-  void EmitLoadTypeFeedbackVector(Register vector);
+  void EmitLoadFeedbackVector(Register vector);
 
   // Activation support.
   void EnterFrame(StackFrame::Type type);
   void EnterFrame(StackFrame::Type type, bool load_constant_pool_pointer_reg);
   void LeaveFrame(StackFrame::Type type);
+
+  void EnterBuiltinFrame(Register context, Register target, Register argc);
+  void LeaveBuiltinFrame(Register context, Register target, Register argc);
 
   // Expects object in rax and returns map with validated enum cache
   // in rax.  Assumes that any other register can be used as a scratch.
@@ -1587,20 +1525,6 @@ class MacroAssembler: public Assembler {
   void TestJSArrayForAllocationMemento(Register receiver_reg,
                                        Register scratch_reg,
                                        Label* no_memento_found);
-
-  void JumpIfJSArrayHasAllocationMemento(Register receiver_reg,
-                                         Register scratch_reg,
-                                         Label* memento_found) {
-    Label no_memento_found;
-    TestJSArrayForAllocationMemento(receiver_reg, scratch_reg,
-                                    &no_memento_found);
-    j(equal, memento_found);
-    bind(&no_memento_found);
-  }
-
-  // Jumps to found label if a prototype map has dictionary elements.
-  void JumpIfDictionaryInPrototypeChain(Register object, Register scratch0,
-                                        Register scratch1, Label* found);
 
  private:
   // Order general registers are pushed by Pushad.
@@ -1634,7 +1558,7 @@ class MacroAssembler: public Assembler {
                       Label::Distance near_jump,
                       const CallWrapper& call_wrapper);
 
-  void EnterExitFramePrologue(bool save_rax);
+  void EnterExitFramePrologue(bool save_rax, StackFrame::Type frame_type);
 
   // Allocates arg_stack_space * kPointerSize memory (not GCed) on the stack
   // accessible via StackSpaceOperand.
@@ -1756,26 +1680,7 @@ inline Operand StackOperandForReturnAddress(int32_t disp) {
   return Operand(rsp, disp);
 }
 
-
-#ifdef GENERATED_CODE_COVERAGE
-extern void LogGeneratedCodeCoverage(const char* file_line);
-#define CODE_COVERAGE_STRINGIFY(x) #x
-#define CODE_COVERAGE_TOSTRING(x) CODE_COVERAGE_STRINGIFY(x)
-#define __FILE_LINE__ __FILE__ ":" CODE_COVERAGE_TOSTRING(__LINE__)
-#define ACCESS_MASM(masm) {                                                  \
-    Address x64_coverage_function = FUNCTION_ADDR(LogGeneratedCodeCoverage); \
-    masm->pushfq();                                                          \
-    masm->Pushad();                                                          \
-    masm->Push(Immediate(reinterpret_cast<int>(&__FILE_LINE__)));            \
-    masm->Call(x64_coverage_function, RelocInfo::EXTERNAL_REFERENCE);        \
-    masm->Pop(rax);                                                          \
-    masm->Popad();                                                           \
-    masm->popfq();                                                           \
-  }                                                                          \
-  masm->
-#else
 #define ACCESS_MASM(masm) masm->
-#endif
 
 }  // namespace internal
 }  // namespace v8

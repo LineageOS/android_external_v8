@@ -80,7 +80,12 @@ class Bootstrapper final {
       MaybeHandle<JSGlobalProxy> maybe_global_proxy,
       v8::Local<v8::ObjectTemplate> global_object_template,
       v8::ExtensionConfiguration* extensions, size_t context_snapshot_index,
+      v8::DeserializeInternalFieldsCallback internal_fields_deserializer,
       GlobalContextType context_type = FULL_CONTEXT);
+
+  Handle<JSGlobalProxy> NewRemoteContext(
+      MaybeHandle<JSGlobalProxy> maybe_global_proxy,
+      v8::Local<v8::ObjectTemplate> global_object_template);
 
   // Detach the environment from its outer global object.
   void DetachGlobal(Handle<Context> env);
@@ -116,8 +121,6 @@ class Bootstrapper final {
   static bool CompileExperimentalExtraBuiltin(Isolate* isolate, int index);
 
   static void ExportFromRuntime(Isolate* isolate, Handle<JSObject> container);
-  static void ExportExperimentalFromRuntime(Isolate* isolate,
-                                            Handle<JSObject> container);
 
  private:
   Isolate* isolate_;

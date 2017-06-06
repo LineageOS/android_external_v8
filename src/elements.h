@@ -56,6 +56,7 @@ class ElementsAccessor {
 
   virtual PropertyDetails GetDetails(JSObject* holder, uint32_t entry) = 0;
   virtual bool HasAccessors(JSObject* holder) = 0;
+  virtual uint32_t NumberOfElements(JSObject* holder) = 0;
 
   // Modifies the length data property as specified for JSArrays and resizes the
   // underlying backing store accordingly. The method honors the semantics of
@@ -94,12 +95,12 @@ class ElementsAccessor {
       Handle<FixedArray> values_or_entries, bool get_entries, int* nof_items,
       PropertyFilter filter = ALL_PROPERTIES) = 0;
 
-  virtual Handle<FixedArray> PrependElementIndices(
+  virtual MaybeHandle<FixedArray> PrependElementIndices(
       Handle<JSObject> object, Handle<FixedArrayBase> backing_store,
       Handle<FixedArray> keys, GetKeysConversion convert,
       PropertyFilter filter = ALL_PROPERTIES) = 0;
 
-  inline Handle<FixedArray> PrependElementIndices(
+  inline MaybeHandle<FixedArray> PrependElementIndices(
       Handle<JSObject> object, Handle<FixedArray> keys,
       GetKeysConversion convert, PropertyFilter filter = ALL_PROPERTIES) {
     return PrependElementIndices(object, handle(object->elements()), keys,
@@ -110,8 +111,13 @@ class ElementsAccessor {
                                            KeyAccumulator* accumulator,
                                            AddKeyConversion convert) = 0;
 
+  virtual void TransitionElementsKind(Handle<JSObject> object,
+                                      Handle<Map> map) = 0;
   virtual void GrowCapacityAndConvert(Handle<JSObject> object,
                                       uint32_t capacity) = 0;
+  // Unlike GrowCapacityAndConvert do not attempt to convert the backing store
+  // and simply return false in this case.
+  virtual bool GrowCapacity(Handle<JSObject> object, uint32_t index) = 0;
 
   static void InitializeOncePerProcess();
   static void TearDown();
@@ -152,6 +158,26 @@ class ElementsAccessor {
   virtual uint32_t GetCapacity(JSObject* holder,
                                FixedArrayBase* backing_store) = 0;
 
+  // Check an Object's own elements for an element (using SameValueZero
+  // semantics)
+  virtual Maybe<bool> IncludesValue(Isolate* isolate, Handle<JSObject> receiver,
+                                    Handle<Object> value, uint32_t start,
+                                    uint32_t length) = 0;
+
+  // Check an Object's own elements for the index of an element (using SameValue
+  // semantics)
+  virtual Maybe<int64_t> IndexOfValue(Isolate* isolate,
+                                      Handle<JSObject> receiver,
+                                      Handle<Object> value, uint32_t start,
+                                      uint32_t length) = 0;
+
+  virtual void CopyElements(Handle<FixedArrayBase> source,
+                            ElementsKind source_kind,
+                            Handle<FixedArrayBase> destination, int size) = 0;
+
+  virtual Handle<FixedArray> CreateListFromArray(Isolate* isolate,
+                                                 Handle<JSArray> array) = 0;
+
  protected:
   friend class LookupIterator;
 
@@ -163,7 +189,7 @@ class ElementsAccessor {
   // indices are equivalent to entries. In the NumberDictionary
   // ElementsAccessor, entries are mapped to an index using the KeyAt method on
   // the NumberDictionary.
-  virtual uint32_t GetEntryForIndex(JSObject* holder,
+  virtual uint32_t GetEntryForIndex(Isolate* isolate, JSObject* holder,
                                     FixedArrayBase* backing_store,
                                     uint32_t index) = 0;
 

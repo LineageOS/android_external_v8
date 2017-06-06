@@ -11,6 +11,8 @@
 namespace v8 {
 namespace internal {
 
+class ParseInfo;
+
 // Iterate over the actual scopes visible from a stack frame or from a closure.
 // The iteration proceeds from the innermost visible nested scope outwards.
 // All scopes are backed by an actual context except the local scope,
@@ -43,16 +45,12 @@ class ScopeIterator {
                 Option options = DEFAULT);
 
   ScopeIterator(Isolate* isolate, Handle<JSFunction> function);
+  ScopeIterator(Isolate* isolate, Handle<JSGeneratorObject> generator);
 
   MUST_USE_RESULT MaybeHandle<JSObject> MaterializeScopeDetails();
 
   // More scopes?
-  bool Done() {
-    DCHECK(!failed_);
-    return context_.is_null();
-  }
-
-  bool Failed() { return failed_; }
+  bool Done() { return context_.is_null(); }
 
   // Move to the next scope.
   void Next();
@@ -100,19 +98,18 @@ class ScopeIterator {
   List<ExtendedScopeInfo> nested_scope_chain_;
   Handle<StringSet> non_locals_;
   bool seen_script_scope_;
-  bool failed_;
 
   inline JavaScriptFrame* GetFrame() {
     return frame_inspector_->GetArgumentsFrame();
   }
 
   inline Handle<JSFunction> GetFunction() {
-    return Handle<JSFunction>::cast(frame_inspector_->GetFunction());
+    return frame_inspector_->GetFunction();
   }
 
-  void RetrieveScopeChain(Scope* scope);
+  void RetrieveScopeChain(DeclarationScope* scope);
 
-  void CollectNonLocals(Scope* scope);
+  void CollectNonLocals(ParseInfo* info, DeclarationScope* scope);
 
   void UnwrapEvaluationContext();
 
@@ -140,7 +137,6 @@ class ScopeIterator {
                          Handle<String> parameter_name,
                          Handle<Object> new_value);
   bool SetStackVariableValue(Handle<ScopeInfo> scope_info,
-                             JavaScriptFrame* frame,
                              Handle<String> variable_name,
                              Handle<Object> new_value);
   bool SetContextVariableValue(Handle<ScopeInfo> scope_info,
@@ -151,6 +147,9 @@ class ScopeIterator {
   void CopyContextLocalsToScopeObject(Handle<ScopeInfo> scope_info,
                                       Handle<Context> context,
                                       Handle<JSObject> scope_object);
+  void CopyModuleVarsToScopeObject(Handle<ScopeInfo> scope_info,
+                                   Handle<Context> context,
+                                   Handle<JSObject> scope_object);
   void CopyContextExtensionToScopeObject(Handle<Context> context,
                                          Handle<JSObject> scope_object,
                                          KeyCollectionMode mode);

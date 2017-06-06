@@ -17,9 +17,7 @@
 
 namespace v8 {
 
-namespace base {
-class Semaphore;
-}
+struct TickSample;
 
 namespace sampler {
 class Sampler;
@@ -65,12 +63,15 @@ namespace internal {
 class CodeEventListener;
 class CpuProfiler;
 class Isolate;
+class JitLogger;
 class Log;
-class PositionsRecorder;
+class LowLevelLogger;
+class PerfBasicLogger;
+class PerfJitLogger;
 class Profiler;
-class Ticker;
-struct TickSample;
+class ProfilerListener;
 class RuntimeCallTimer;
+class Ticker;
 
 #undef LOG
 #define LOG(isolate, Call)                              \
@@ -84,12 +85,6 @@ class RuntimeCallTimer;
     v8::internal::Logger* logger = (isolate)->logger(); \
     if (logger->is_logging_code_events()) logger->Call; \
   } while (false)
-
-class JitLogger;
-class PerfBasicLogger;
-class LowLevelLogger;
-class PerfJitLogger;
-class ProfilerListener;
 
 class Logger : public CodeEventListener {
  public:
@@ -141,12 +136,6 @@ class Logger : public CodeEventListener {
   // object.
   void SuspectReadEvent(Name* name, Object* obj);
 
-  // Emits an event when a message is put on or read from a debugging queue.
-  // DebugTag lets us put a call-site specific label on the event.
-  void DebugTag(const char* call_site_tag);
-  void DebugEvent(const char* event_type, Vector<uint16_t> parameter);
-
-
   // ==== Events logged by --log-api. ====
   void ApiSecurityCheck();
   void ApiNamedPropertyAccess(const char* tag, JSObject* holder, Object* name);
@@ -184,26 +173,30 @@ class Logger : public CodeEventListener {
   void RegExpCodeCreateEvent(AbstractCode* code, String* source);
   // Emits a code move event.
   void CodeMoveEvent(AbstractCode* from, Address to);
-  // Emits a code line info add event with Postion type.
-  void CodeLinePosInfoAddPositionEvent(void* jit_handler_data,
-                                       int pc_offset,
-                                       int position);
-  // Emits a code line info add event with StatementPostion type.
-  void CodeLinePosInfoAddStatementPositionEvent(void* jit_handler_data,
-                                                int pc_offset,
-                                                int position);
-  // Emits a code line info start to record event
-  void CodeStartLinePosInfoRecordEvent(PositionsRecorder* pos_recorder);
-  // Emits a code line info finish record event.
-  // It's the callee's responsibility to dispose the parameter jit_handler_data.
-  void CodeEndLinePosInfoRecordEvent(AbstractCode* code,
-                                     void* jit_handler_data);
+  // Emits a code line info record event.
+  void CodeLinePosInfoRecordEvent(AbstractCode* code,
+                                  ByteArray* source_position_table);
 
   void SharedFunctionInfoMoveEvent(Address from, Address to);
 
   void CodeNameEvent(Address addr, int pos, const char* code_name);
 
   void CodeDeoptEvent(Code* code, Address pc, int fp_to_sp_delta);
+
+  void ICEvent(const char* type, bool keyed, const Address pc, int line,
+               int column, Map* map, Object* key, char old_state,
+               char new_state, const char* modifier,
+               const char* slow_stub_reason);
+  void CompareIC(const Address pc, int line, int column, Code* stub,
+                 const char* op, const char* old_left, const char* old_right,
+                 const char* old_state, const char* new_left,
+                 const char* new_right, const char* new_state);
+  void BinaryOpIC(const Address pc, int line, int column, Code* stub,
+                  const char* old_state, const char* new_state,
+                  AllocationSite* allocation_site);
+  void ToBooleanIC(const Address pc, int line, int column, Code* stub,
+                   const char* old_state, const char* new_state);
+  void PatchIC(const Address pc, const Address test, int delta);
 
   // ==== Events logged by --log-gc. ====
   // Heap sampling events: start, end, and individual types.
@@ -233,11 +226,6 @@ class Logger : public CodeEventListener {
 
   INLINE(static void CallEventLogger(Isolate* isolate, const char* name,
                                      StartEnd se, bool expose_to_api));
-
-  // ==== Events logged by --log-regexp ====
-  // Regexp compilation and execution events.
-
-  void RegExpCompileEvent(Handle<JSRegExp> regexp, bool in_cache);
 
   bool is_logging() {
     return is_logging_;
@@ -362,8 +350,7 @@ class Logger : public CodeEventListener {
   V(CompileCode, true)          \
   V(DeoptimizeCode, true)       \
   V(Execute, true)              \
-  V(External, true)             \
-  V(IcMiss, false)
+  V(External, true)
 
 #define V(TimerName, expose)                                                  \
   class TimerEvent##TimerName : public AllStatic {                            \
@@ -384,31 +371,9 @@ class TimerEventScope {
 
   ~TimerEventScope() { LogTimerEvent(Logger::END); }
 
+ private:
   void LogTimerEvent(Logger::StartEnd se);
-
- private:
   Isolate* isolate_;
-};
-
-class PositionsRecorder BASE_EMBEDDED {
- public:
-  PositionsRecorder() { jit_handler_data_ = NULL; }
-
-  void AttachJITHandlerData(void* user_data) { jit_handler_data_ = user_data; }
-
-  void* DetachJITHandlerData() {
-    void* old_data = jit_handler_data_;
-    jit_handler_data_ = NULL;
-    return old_data;
-  }
-
- protected:
-  // Currently jit_handler_data_ is used to store JITHandler-specific data
-  // over the lifetime of a PositionsRecorder
-  void* jit_handler_data_;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(PositionsRecorder);
 };
 
 class CodeEventLogger : public CodeEventListener {
