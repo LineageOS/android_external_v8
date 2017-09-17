@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// Flags: --expose-debug-as debug --allow-natives-syntax
+// Flags: --expose-debug-as debug --allow-natives-syntax --promise-extra
 
 // Test debug events when an exception is thrown inside a Promise, which is
 // caught by a custom promise, which throws a new exception in its reject
@@ -31,6 +31,7 @@ function MyPromise(resolver) {
 };
 
 MyPromise.prototype = new Promise(function() {});
+MyPromise.__proto__ = Promise;
 p.constructor = MyPromise;
 
 var q = p.chain(
@@ -81,10 +82,7 @@ function testDone(iteration) {
     }
   }
 
-  // Run testDone through the Object.observe processing loop.
-  var dummy = {};
-  Object.observe(dummy, checkResult);
-  dummy.dummy = dummy;
+  %EnqueueMicrotask(checkResult);
 }
 
 testDone(0);

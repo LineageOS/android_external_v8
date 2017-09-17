@@ -246,6 +246,14 @@ CodeMap.prototype.getAllStaticEntries = function() {
 
 
 /**
+ * Returns an array of pairs of all static code entries and their addresses.
+ */
+CodeMap.prototype.getAllStaticEntriesWithAddresses = function() {
+  return this.statics_.exportKeysAndValues();
+};
+
+
+/**
  * Returns an array of all libraries entries.
  */
 CodeMap.prototype.getAllLibrariesEntries = function() {
@@ -258,11 +266,13 @@ CodeMap.prototype.getAllLibrariesEntries = function() {
  *
  * @param {number} size Code entry size in bytes.
  * @param {string} opt_name Code entry name.
+ * @param {string} opt_type Code entry type, e.g. SHARED_LIB, CPP.
  * @constructor
  */
-CodeMap.CodeEntry = function(size, opt_name) {
+CodeMap.CodeEntry = function(size, opt_name, opt_type) {
   this.size = size;
   this.name = opt_name || '';
+  this.type = opt_type || '';
   this.nameUpdated_ = false;
 };
 

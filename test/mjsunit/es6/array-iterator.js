@@ -47,6 +47,9 @@ function TestArrayPrototype() {
   assertHasOwnProperty(Array.prototype, 'entries', DONT_ENUM);
   assertHasOwnProperty(Array.prototype, 'keys', DONT_ENUM);
   assertHasOwnProperty(Array.prototype, Symbol.iterator, DONT_ENUM);
+  assertEquals('entries', Array.prototype.entries.name);
+  assertEquals('keys', Array.prototype.keys.name);
+  assertEquals('values', Array.prototype[Symbol.iterator].name);
 }
 TestArrayPrototype();
 
@@ -157,7 +160,16 @@ function TestArrayIteratorPrototype() {
   assertArrayEquals(['next'],
       Object.getOwnPropertyNames(ArrayIteratorPrototype));
   assertHasOwnProperty(ArrayIteratorPrototype, 'next', DONT_ENUM);
-  assertHasOwnProperty(ArrayIteratorPrototype, Symbol.iterator, DONT_ENUM);
+  assertFalse(ArrayIteratorPrototype.hasOwnProperty(Symbol.iterator));
+
+  assertEquals("[object Array Iterator]",
+      Object.prototype.toString.call(iterator));
+  assertEquals("Array Iterator", ArrayIteratorPrototype[Symbol.toStringTag]);
+  var desc = Object.getOwnPropertyDescriptor(
+      ArrayIteratorPrototype, Symbol.toStringTag);
+  assertTrue(desc.configurable);
+  assertFalse(desc.writable);
+  assertEquals("Array Iterator", desc.value);
 }
 TestArrayIteratorPrototype();
 

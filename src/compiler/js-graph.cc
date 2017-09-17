@@ -2,113 +2,114 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "src/code-stubs.h"
 #include "src/compiler/js-graph.h"
-#include "src/compiler/node-properties-inl.h"
+#include "src/compiler/node-properties.h"
 #include "src/compiler/typer.h"
 
 namespace v8 {
 namespace internal {
 namespace compiler {
 
-Node* JSGraph::ImmovableHeapConstant(Handle<Object> object) {
-  Unique<Object> unique = Unique<Object>::CreateImmovable(object);
-  return NewNode(common()->HeapConstant(unique));
+#define CACHED(name, expr) \
+  cached_nodes_[name] ? cached_nodes_[name] : (cached_nodes_[name] = (expr))
+
+Node* JSGraph::AllocateInNewSpaceStubConstant() {
+  return CACHED(kAllocateInNewSpaceStubConstant,
+                HeapConstant(isolate()->builtins()->AllocateInNewSpace()));
 }
 
-
-Node* JSGraph::NewNode(const Operator* op) {
-  Node* node = graph()->NewNode(op);
-  typer_->Init(node);
-  return node;
+Node* JSGraph::AllocateInOldSpaceStubConstant() {
+  return CACHED(kAllocateInOldSpaceStubConstant,
+                HeapConstant(isolate()->builtins()->AllocateInOldSpace()));
 }
 
+Node* JSGraph::ToNumberBuiltinConstant() {
+  return CACHED(kToNumberBuiltinConstant,
+                HeapConstant(isolate()->builtins()->ToNumber()));
+}
 
-Node* JSGraph::CEntryStubConstant() {
-  if (!c_entry_stub_constant_.is_set()) {
-    c_entry_stub_constant_.set(
-        ImmovableHeapConstant(CEntryStub(isolate(), 1).GetCode()));
+Node* JSGraph::CEntryStubConstant(int result_size) {
+  if (result_size == 1) {
+    return CACHED(kCEntryStubConstant,
+                  HeapConstant(CEntryStub(isolate(), 1).GetCode()));
   }
-  return c_entry_stub_constant_.get();
+  return HeapConstant(CEntryStub(isolate(), result_size).GetCode());
 }
 
+
+Node* JSGraph::EmptyFixedArrayConstant() {
+  return CACHED(kEmptyFixedArrayConstant,
+                HeapConstant(factory()->empty_fixed_array()));
+}
+
+Node* JSGraph::EmptyLiteralsArrayConstant() {
+  return CACHED(kEmptyLiteralsArrayConstant,
+                HeapConstant(factory()->empty_literals_array()));
+}
+
+Node* JSGraph::HeapNumberMapConstant() {
+  return CACHED(kHeapNumberMapConstant,
+                HeapConstant(factory()->heap_number_map()));
+}
+
+Node* JSGraph::OptimizedOutConstant() {
+  return CACHED(kOptimizedOutConstant,
+                HeapConstant(factory()->optimized_out()));
+}
+
+Node* JSGraph::StaleRegisterConstant() {
+  return CACHED(kStaleRegisterConstant,
+                HeapConstant(factory()->stale_register()));
+}
 
 Node* JSGraph::UndefinedConstant() {
-  if (!undefined_constant_.is_set()) {
-    undefined_constant_.set(
-        ImmovableHeapConstant(factory()->undefined_value()));
-  }
-  return undefined_constant_.get();
+  return CACHED(kUndefinedConstant, HeapConstant(factory()->undefined_value()));
 }
 
 
 Node* JSGraph::TheHoleConstant() {
-  if (!the_hole_constant_.is_set()) {
-    the_hole_constant_.set(ImmovableHeapConstant(factory()->the_hole_value()));
-  }
-  return the_hole_constant_.get();
+  return CACHED(kTheHoleConstant, HeapConstant(factory()->the_hole_value()));
 }
 
 
 Node* JSGraph::TrueConstant() {
-  if (!true_constant_.is_set()) {
-    true_constant_.set(ImmovableHeapConstant(factory()->true_value()));
-  }
-  return true_constant_.get();
+  return CACHED(kTrueConstant, HeapConstant(factory()->true_value()));
 }
 
 
 Node* JSGraph::FalseConstant() {
-  if (!false_constant_.is_set()) {
-    false_constant_.set(ImmovableHeapConstant(factory()->false_value()));
-  }
-  return false_constant_.get();
+  return CACHED(kFalseConstant, HeapConstant(factory()->false_value()));
 }
 
 
 Node* JSGraph::NullConstant() {
-  if (!null_constant_.is_set()) {
-    null_constant_.set(ImmovableHeapConstant(factory()->null_value()));
-  }
-  return null_constant_.get();
+  return CACHED(kNullConstant, HeapConstant(factory()->null_value()));
 }
 
 
 Node* JSGraph::ZeroConstant() {
-  if (!zero_constant_.is_set()) zero_constant_.set(NumberConstant(0.0));
-  return zero_constant_.get();
+  return CACHED(kZeroConstant, NumberConstant(0.0));
 }
 
 
 Node* JSGraph::OneConstant() {
-  if (!one_constant_.is_set()) one_constant_.set(NumberConstant(1.0));
-  return one_constant_.get();
+  return CACHED(kOneConstant, NumberConstant(1.0));
 }
 
 
 Node* JSGraph::NaNConstant() {
-  if (!nan_constant_.is_set()) {
-    nan_constant_.set(NumberConstant(base::OS::nan_value()));
+  return CACHED(kNaNConstant,
+                NumberConstant(std::numeric_limits<double>::quiet_NaN()));
+}
+
+
+Node* JSGraph::HeapConstant(Handle<HeapObject> value) {
+  Node** loc = cache_.FindHeapConstant(value);
+  if (*loc == nullptr) {
+    *loc = graph()->NewNode(common()->HeapConstant(value));
   }
-  return nan_constant_.get();
-}
-
-
-Node* JSGraph::HeapConstant(Unique<Object> value) {
-  // TODO(turbofan): canonicalize heap constants using Unique<T>
-  return NewNode(common()->HeapConstant(value));
-}
-
-
-Node* JSGraph::HeapConstant(Handle<Object> value) {
-  // TODO(titzer): We could also match against the addresses of immortable
-  // immovables here, even without access to the heap, thus always
-  // canonicalizing references to them.
-  // return HeapConstant(Unique<Object>::CreateUninitialized(value));
-  // TODO(turbofan): This is a work-around to make Unique::HashCode() work for
-  // value numbering. We need some sane way to compute a unique hash code for
-  // arbitrary handles here.
-  Unique<Object> unique(reinterpret_cast<Address>(*value.location()), value);
-  return HeapConstant(unique);
+  return *loc;
 }
 
 
@@ -117,18 +118,18 @@ Node* JSGraph::Constant(Handle<Object> value) {
   // canonicalized node can be used.
   if (value->IsNumber()) {
     return Constant(value->Number());
-  } else if (value->IsUndefined()) {
+  } else if (value->IsUndefined(isolate())) {
     return UndefinedConstant();
-  } else if (value->IsTrue()) {
+  } else if (value->IsTrue(isolate())) {
     return TrueConstant();
-  } else if (value->IsFalse()) {
+  } else if (value->IsFalse(isolate())) {
     return FalseConstant();
-  } else if (value->IsNull()) {
+  } else if (value->IsNull(isolate())) {
     return NullConstant();
-  } else if (value->IsTheHole()) {
+  } else if (value->IsTheHole(isolate())) {
     return TheHoleConstant();
   } else {
-    return HeapConstant(value);
+    return HeapConstant(Handle<HeapObject>::cast(value));
   }
 }
 
@@ -149,17 +150,59 @@ Node* JSGraph::Constant(int32_t value) {
 
 Node* JSGraph::Int32Constant(int32_t value) {
   Node** loc = cache_.FindInt32Constant(value);
-  if (*loc == NULL) {
-    *loc = NewNode(common()->Int32Constant(value));
+  if (*loc == nullptr) {
+    *loc = graph()->NewNode(common()->Int32Constant(value));
   }
   return *loc;
 }
 
 
+Node* JSGraph::Int64Constant(int64_t value) {
+  Node** loc = cache_.FindInt64Constant(value);
+  if (*loc == nullptr) {
+    *loc = graph()->NewNode(common()->Int64Constant(value));
+  }
+  return *loc;
+}
+
+Node* JSGraph::RelocatableInt32Constant(int32_t value, RelocInfo::Mode rmode) {
+  Node** loc = cache_.FindRelocatableInt32Constant(
+      value, static_cast<RelocInfoMode>(rmode));
+  if (*loc == nullptr) {
+    *loc = graph()->NewNode(common()->RelocatableInt32Constant(value, rmode));
+  }
+  return *loc;
+}
+
+Node* JSGraph::RelocatableInt64Constant(int64_t value, RelocInfo::Mode rmode) {
+  Node** loc = cache_.FindRelocatableInt64Constant(
+      value, static_cast<RelocInfoMode>(rmode));
+  if (*loc == nullptr) {
+    *loc = graph()->NewNode(common()->RelocatableInt64Constant(value, rmode));
+  }
+  return *loc;
+}
+
+Node* JSGraph::RelocatableIntPtrConstant(intptr_t value,
+                                         RelocInfo::Mode rmode) {
+  return kPointerSize == 8
+             ? RelocatableInt64Constant(value, rmode)
+             : RelocatableInt32Constant(static_cast<int>(value), rmode);
+}
+
 Node* JSGraph::NumberConstant(double value) {
   Node** loc = cache_.FindNumberConstant(value);
-  if (*loc == NULL) {
-    *loc = NewNode(common()->NumberConstant(value));
+  if (*loc == nullptr) {
+    *loc = graph()->NewNode(common()->NumberConstant(value));
+  }
+  return *loc;
+}
+
+
+Node* JSGraph::Float32Constant(float value) {
+  Node** loc = cache_.FindFloat32Constant(value);
+  if (*loc == nullptr) {
+    *loc = graph()->NewNode(common()->Float32Constant(value));
   }
   return *loc;
 }
@@ -167,8 +210,8 @@ Node* JSGraph::NumberConstant(double value) {
 
 Node* JSGraph::Float64Constant(double value) {
   Node** loc = cache_.FindFloat64Constant(value);
-  if (*loc == NULL) {
-    *loc = NewNode(common()->Float64Constant(value));
+  if (*loc == nullptr) {
+    *loc = graph()->NewNode(common()->Float64Constant(value));
   }
   return *loc;
 }
@@ -176,11 +219,35 @@ Node* JSGraph::Float64Constant(double value) {
 
 Node* JSGraph::ExternalConstant(ExternalReference reference) {
   Node** loc = cache_.FindExternalConstant(reference);
-  if (*loc == NULL) {
-    *loc = NewNode(common()->ExternalConstant(reference));
+  if (*loc == nullptr) {
+    *loc = graph()->NewNode(common()->ExternalConstant(reference));
   }
   return *loc;
 }
+
+
+Node* JSGraph::ExternalConstant(Runtime::FunctionId function_id) {
+  return ExternalConstant(ExternalReference(function_id, isolate()));
+}
+
+Node* JSGraph::EmptyStateValues() {
+  return CACHED(kEmptyStateValues, graph()->NewNode(common()->StateValues(0)));
+}
+
+Node* JSGraph::Dead() {
+  return CACHED(kDead, graph()->NewNode(common()->Dead()));
+}
+
+
+void JSGraph::GetCachedNodes(NodeVector* nodes) {
+  cache_.GetCachedNodes(nodes);
+  for (size_t i = 0; i < arraysize(cached_nodes_); i++) {
+    if (Node* node = cached_nodes_[i]) {
+      if (!node->IsDead()) nodes->push_back(node);
+    }
+  }
+}
+
 }  // namespace compiler
 }  // namespace internal
 }  // namespace v8

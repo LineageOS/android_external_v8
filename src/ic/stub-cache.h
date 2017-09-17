@@ -52,9 +52,9 @@ class StubCache {
   // Arguments extra, extra2 and extra3 may be used to pass additional scratch
   // registers. Set to no_reg if not needed.
   // If leave_frame is true, then exit a frame before the tail call.
-  void GenerateProbe(MacroAssembler* masm, Code::Flags flags, bool leave_frame,
-                     Register receiver, Register name, Register scratch,
-                     Register extra, Register extra2 = no_reg,
+  void GenerateProbe(MacroAssembler* masm, Code::Kind ic_kind,
+                     Code::Flags flags, Register receiver, Register name,
+                     Register scratch, Register extra, Register extra2 = no_reg,
                      Register extra3 = no_reg);
 
   enum Table { kPrimary, kSecondary };
@@ -92,9 +92,24 @@ class StubCache {
   // automatically discards the hash bit field.
   static const int kCacheIndexShift = Name::kHashShift;
 
- private:
+  static const int kPrimaryTableBits = 11;
+  static const int kPrimaryTableSize = (1 << kPrimaryTableBits);
+  static const int kSecondaryTableBits = 9;
+  static const int kSecondaryTableSize = (1 << kSecondaryTableBits);
+
+  static int PrimaryOffsetForTesting(Name* name, Code::Flags flags, Map* map) {
+    return PrimaryOffset(name, flags, map);
+  }
+
+  static int SecondaryOffsetForTesting(Name* name, Code::Flags flags,
+                                       int seed) {
+    return SecondaryOffset(name, flags, seed);
+  }
+
+  // The constructor is made public only for the purposes of testing.
   explicit StubCache(Isolate* isolate);
 
+ private:
   // The stub cache has a primary and secondary level.  The two levels have
   // different hashing algorithms in order to avoid simultaneous collisions
   // in both caches.  Unlike a probing strategy (quadratic or otherwise) the
@@ -150,11 +165,6 @@ class StubCache {
                                     offset * multiplier);
   }
 
-  static const int kPrimaryTableBits = 11;
-  static const int kPrimaryTableSize = (1 << kPrimaryTableBits);
-  static const int kSecondaryTableBits = 9;
-  static const int kSecondaryTableSize = (1 << kSecondaryTableBits);
-
  private:
   Entry primary_[kPrimaryTableSize];
   Entry secondary_[kSecondaryTableSize];
@@ -165,7 +175,7 @@ class StubCache {
 
   DISALLOW_COPY_AND_ASSIGN(StubCache);
 };
-}
-}  // namespace v8::internal
+}  // namespace internal
+}  // namespace v8
 
 #endif  // V8_STUB_CACHE_H_

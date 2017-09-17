@@ -7,6 +7,7 @@
 
 #include "src/frames.h"
 #include "src/isolate.h"
+#include "src/objects-inl.h"
 #include "src/v8memory.h"
 
 #if V8_TARGET_ARCH_IA32
@@ -17,10 +18,14 @@
 #include "src/arm64/frames-arm64.h"  // NOLINT
 #elif V8_TARGET_ARCH_ARM
 #include "src/arm/frames-arm.h"  // NOLINT
+#elif V8_TARGET_ARCH_PPC
+#include "src/ppc/frames-ppc.h"  // NOLINT
 #elif V8_TARGET_ARCH_MIPS
 #include "src/mips/frames-mips.h"  // NOLINT
 #elif V8_TARGET_ARCH_MIPS64
 #include "src/mips64/frames-mips64.h"  // NOLINT
+#elif V8_TARGET_ARCH_S390
+#include "src/s390/frames-s390.h"  // NOLINT
 #elif V8_TARGET_ARCH_X87
 #include "src/x87/frames-x87.h"  // NOLINT
 #else
@@ -42,60 +47,8 @@ inline StackHandler* StackHandler::next() const {
 }
 
 
-inline bool StackHandler::includes(Address address) const {
-  Address start = this->address();
-  Address end = start + StackHandlerConstants::kSize;
-  return start <= address && address <= end;
-}
-
-
-inline void StackHandler::Iterate(ObjectVisitor* v, Code* holder) const {
-  v->VisitPointer(context_address());
-  v->VisitPointer(code_address());
-}
-
-
 inline StackHandler* StackHandler::FromAddress(Address address) {
   return reinterpret_cast<StackHandler*>(address);
-}
-
-
-inline bool StackHandler::is_js_entry() const {
-  return kind() == JS_ENTRY;
-}
-
-
-inline bool StackHandler::is_catch() const {
-  return kind() == CATCH;
-}
-
-
-inline bool StackHandler::is_finally() const {
-  return kind() == FINALLY;
-}
-
-
-inline StackHandler::Kind StackHandler::kind() const {
-  const int offset = StackHandlerConstants::kStateOffset;
-  return KindField::decode(Memory::unsigned_at(address() + offset));
-}
-
-
-inline unsigned StackHandler::index() const {
-  const int offset = StackHandlerConstants::kStateOffset;
-  return IndexField::decode(Memory::unsigned_at(address() + offset));
-}
-
-
-inline Object** StackHandler::context_address() const {
-  const int offset = StackHandlerConstants::kContextOffset;
-  return reinterpret_cast<Object**>(address() + offset);
-}
-
-
-inline Object** StackHandler::code_address() const {
-  const int offset = StackHandlerConstants::kCodeOffset;
-  return reinterpret_cast<Object**>(address() + offset);
 }
 
 
@@ -163,7 +116,9 @@ inline void StandardFrame::SetExpression(int index, Object* value) {
 
 inline Object* StandardFrame::context() const {
   const int offset = StandardFrameConstants::kContextOffset;
-  return Memory::Object_at(fp() + offset);
+  Object* maybe_result = Memory::Object_at(fp() + offset);
+  DCHECK(!maybe_result->IsSmi());
+  return maybe_result;
 }
 
 
@@ -188,23 +143,20 @@ inline Address StandardFrame::ComputeConstantPoolAddress(Address fp) {
 
 
 inline bool StandardFrame::IsArgumentsAdaptorFrame(Address fp) {
-  Object* marker =
-      Memory::Object_at(fp + StandardFrameConstants::kContextOffset);
-  return marker == Smi::FromInt(StackFrame::ARGUMENTS_ADAPTOR);
+  Object* frame_type =
+      Memory::Object_at(fp + TypedFrameConstants::kFrameTypeOffset);
+  return frame_type == Smi::FromInt(StackFrame::ARGUMENTS_ADAPTOR);
 }
 
 
 inline bool StandardFrame::IsConstructFrame(Address fp) {
-  Object* marker =
-      Memory::Object_at(fp + StandardFrameConstants::kMarkerOffset);
-  return marker == Smi::FromInt(StackFrame::CONSTRUCT);
+  Object* frame_type =
+      Memory::Object_at(fp + TypedFrameConstants::kFrameTypeOffset);
+  return frame_type == Smi::FromInt(StackFrame::CONSTRUCT);
 }
-
 
 inline JavaScriptFrame::JavaScriptFrame(StackFrameIteratorBase* iterator)
-    : StandardFrame(iterator) {
-}
-
+    : StandardFrame(iterator) {}
 
 Address JavaScriptFrame::GetParameterSlot(int index) const {
   int param_count = ComputeParametersCount();
@@ -247,11 +199,6 @@ inline int JavaScriptFrame::ComputeOperandsCount() const {
 }
 
 
-inline Object* JavaScriptFrame::receiver() const {
-  return GetParameter(-1);
-}
-
-
 inline void JavaScriptFrame::set_receiver(Object* value) {
   Memory::Object_at(GetParameterSlot(-1)) = value;
 }
@@ -262,8 +209,9 @@ inline bool JavaScriptFrame::has_adapted_arguments() const {
 }
 
 
-inline JSFunction* JavaScriptFrame::function() const {
-  return JSFunction::cast(function_slot_object());
+inline Object* JavaScriptFrame::function_slot_object() const {
+  const int offset = JavaScriptFrameConstants::kFunctionOffset;
+  return Memory::Object_at(fp() + offset);
 }
 
 
@@ -277,10 +225,25 @@ inline OptimizedFrame::OptimizedFrame(StackFrameIteratorBase* iterator)
 }
 
 
+inline InterpretedFrame::InterpretedFrame(StackFrameIteratorBase* iterator)
+    : JavaScriptFrame(iterator) {}
+
+
 inline ArgumentsAdaptorFrame::ArgumentsAdaptorFrame(
     StackFrameIteratorBase* iterator) : JavaScriptFrame(iterator) {
 }
 
+inline BuiltinFrame::BuiltinFrame(StackFrameIteratorBase* iterator)
+    : JavaScriptFrame(iterator) {}
+
+inline WasmFrame::WasmFrame(StackFrameIteratorBase* iterator)
+    : StandardFrame(iterator) {}
+
+inline WasmToJsFrame::WasmToJsFrame(StackFrameIteratorBase* iterator)
+    : StubFrame(iterator) {}
+
+inline JsToWasmFrame::JsToWasmFrame(StackFrameIteratorBase* iterator)
+    : StubFrame(iterator) {}
 
 inline InternalFrame::InternalFrame(StackFrameIteratorBase* iterator)
     : StandardFrame(iterator) {
@@ -296,20 +259,17 @@ inline ConstructFrame::ConstructFrame(StackFrameIteratorBase* iterator)
     : InternalFrame(iterator) {
 }
 
-
 inline JavaScriptFrameIterator::JavaScriptFrameIterator(
     Isolate* isolate)
     : iterator_(isolate) {
   if (!done()) Advance();
 }
 
-
 inline JavaScriptFrameIterator::JavaScriptFrameIterator(
     Isolate* isolate, ThreadLocalTop* top)
     : iterator_(isolate, top) {
   if (!done()) Advance();
 }
-
 
 inline JavaScriptFrame* JavaScriptFrameIterator::frame() const {
   // TODO(1233797): The frame hierarchy needs to change. It's
@@ -321,6 +281,28 @@ inline JavaScriptFrame* JavaScriptFrameIterator::frame() const {
   return static_cast<JavaScriptFrame*>(frame);
 }
 
+inline StandardFrame* StackTraceFrameIterator::frame() const {
+  StackFrame* frame = iterator_.frame();
+  DCHECK(frame->is_java_script() || frame->is_arguments_adaptor() ||
+         frame->is_wasm());
+  return static_cast<StandardFrame*>(frame);
+}
+
+bool StackTraceFrameIterator::is_javascript() const {
+  return frame()->is_java_script();
+}
+
+bool StackTraceFrameIterator::is_wasm() const { return frame()->is_wasm(); }
+
+JavaScriptFrame* StackTraceFrameIterator::javascript_frame() const {
+  DCHECK(is_javascript());
+  return static_cast<JavaScriptFrame*>(frame());
+}
+
+WasmFrame* StackTraceFrameIterator::wasm_frame() const {
+  DCHECK(is_wasm());
+  return static_cast<WasmFrame*>(frame());
+}
 
 inline StackFrame* SafeStackFrameIterator::frame() const {
   DCHECK(!done());
@@ -329,6 +311,7 @@ inline StackFrame* SafeStackFrameIterator::frame() const {
 }
 
 
-} }  // namespace v8::internal
+}  // namespace internal
+}  // namespace v8
 
 #endif  // V8_FRAMES_INL_H_

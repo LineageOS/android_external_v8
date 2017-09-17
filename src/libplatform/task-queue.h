@@ -33,15 +33,16 @@ class TaskQueue {
   void Terminate();
 
  private:
-  base::Mutex lock_;
   base::Semaphore process_queue_semaphore_;
+  base::Mutex lock_;
   std::queue<Task*> task_queue_;
   bool terminated_;
 
   DISALLOW_COPY_AND_ASSIGN(TaskQueue);
 };
 
-} }  // namespace v8::platform
+}  // namespace platform
+}  // namespace v8
 
 
 #endif  // V8_LIBPLATFORM_TASK_QUEUE_H_
