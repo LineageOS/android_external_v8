@@ -9,6 +9,7 @@ LOCAL_CFLAGS += \
 	-Wno-import \
 	-Wno-format \
 	-Wno-unused-parameter \
+	-Wno-unused-private-field \
 	-Wno-sign-compare \
 	-Wno-missing-field-initializers \
 	-Wno-ignored-qualifiers \
