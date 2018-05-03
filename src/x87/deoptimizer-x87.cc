@@ -35,6 +35,7 @@ void Deoptimizer::EnsureRelocSpaceForLazyDeoptimization(Handle<Code> code) {
   for (int i = 0; i < deopt_data->DeoptCount(); i++) {
     int pc_offset = deopt_data->Pc(i)->value();
     if (pc_offset == -1) continue;
+    pc_offset = pc_offset + 1;  // We will encode the pc offset after the call.
     DCHECK_GE(pc_offset, prev_pc_offset);
     int pc_delta = pc_offset - prev_pc_offset;
     // We use RUNTIME_ENTRY reloc info which has a size of 2 bytes
@@ -163,8 +164,7 @@ void Deoptimizer::PatchCodeForDeoptimization(Isolate* isolate, Code* code) {
   // Right trim the relocation info to free up remaining space.
   const int delta = reloc_info->length() - new_reloc_length;
   if (delta > 0) {
-    isolate->heap()->RightTrimFixedArray<Heap::SEQUENTIAL_TO_SWEEPER>(
-        reloc_info, delta);
+    isolate->heap()->RightTrimFixedArray(reloc_info, delta);
   }
 }
 
@@ -181,7 +181,7 @@ void Deoptimizer::SetPlatformCompiledStubRegisters(
 
 void Deoptimizer::CopyDoubleRegisters(FrameDescription* output_frame) {
   for (int i = 0; i < X87Register::kMaxNumRegisters; ++i) {
-    double double_value = input_->GetDoubleRegister(i);
+    Float64 double_value = input_->GetDoubleRegister(i);
     output_frame->SetDoubleRegister(i, double_value);
   }
 }

@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "src/compiler/register-allocator-verifier.h"
+
 #include "src/bit-vector.h"
 #include "src/compiler/instruction.h"
-#include "src/compiler/register-allocator-verifier.h"
+#include "src/ostreams.h"
 
 namespace v8 {
 namespace internal {
@@ -160,7 +162,7 @@ void RegisterAllocatorVerifier::BuildConstraint(const InstructionOperand* op,
     int vreg = unallocated->virtual_register();
     constraint->virtual_register_ = vreg;
     if (unallocated->basic_policy() == UnallocatedOperand::FIXED_SLOT) {
-      constraint->type_ = sequence()->IsFP(vreg) ? kFPSlot : kSlot;
+      constraint->type_ = kFixedSlot;
       constraint->value_ = unallocated->fixed_slot_index();
     } else {
       switch (unallocated->extended_policy()) {
@@ -193,7 +195,9 @@ void RegisterAllocatorVerifier::BuildConstraint(const InstructionOperand* op,
           }
           break;
         case UnallocatedOperand::MUST_HAVE_SLOT:
-          constraint->type_ = sequence()->IsFP(vreg) ? kFPSlot : kSlot;
+          constraint->type_ = kSlot;
+          constraint->value_ =
+              ElementSizeLog2Of(sequence()->GetRepresentation(vreg));
           break;
         case UnallocatedOperand::SAME_AS_FIRST_INPUT:
           constraint->type_ = kSameAsFirst;
@@ -239,14 +243,13 @@ void RegisterAllocatorVerifier::CheckConstraint(
       CHECK_EQ(LocationOperand::cast(op)->register_code(), constraint->value_);
       return;
     case kFixedSlot:
-      CHECK(op->IsStackSlot());
+      CHECK(op->IsStackSlot() || op->IsFPStackSlot());
       CHECK_EQ(LocationOperand::cast(op)->index(), constraint->value_);
       return;
     case kSlot:
-      CHECK(op->IsStackSlot());
-      return;
-    case kFPSlot:
-      CHECK(op->IsFPStackSlot());
+      CHECK(op->IsStackSlot() || op->IsFPStackSlot());
+      CHECK_EQ(ElementSizeLog2Of(LocationOperand::cast(op)->representation()),
+               constraint->value_);
       return;
     case kNone:
       CHECK(op->IsRegister() || op->IsStackSlot());
@@ -297,6 +300,27 @@ void BlockAssessments::DropRegisters() {
     InstructionOperand op = current->first;
     if (op.IsAnyRegister()) map().erase(current);
   }
+}
+
+void BlockAssessments::Print() const {
+  OFStream os(stdout);
+  for (const auto pair : map()) {
+    const InstructionOperand op = pair.first;
+    const Assessment* assessment = pair.second;
+    // Use operator<< so we can write the assessment on the same
+    // line. Since we need a register configuration, just pick
+    // Turbofan for now.
+    PrintableInstructionOperand wrapper = {RegisterConfiguration::Turbofan(),
+                                           op};
+    os << wrapper << " : ";
+    if (assessment->kind() == AssessmentKind::Final) {
+      os << "v" << FinalAssessment::cast(assessment)->virtual_register();
+    } else {
+      os << "P";
+    }
+    os << std::endl;
+  }
+  os << std::endl;
 }
 
 BlockAssessments* RegisterAllocatorVerifier::CreateForBlock(
@@ -351,8 +375,9 @@ void RegisterAllocatorVerifier::ValidatePendingAssessment(
   // for the original operand (the one where the assessment was created for
   // first) are also pending. To avoid recursion, we use a work list. To
   // deal with cycles, we keep a set of seen nodes.
-  ZoneQueue<std::pair<const PendingAssessment*, int>> worklist(zone());
-  ZoneSet<RpoNumber> seen(zone());
+  Zone local_zone(zone()->allocator(), ZONE_NAME);
+  ZoneQueue<std::pair<const PendingAssessment*, int>> worklist(&local_zone);
+  ZoneSet<RpoNumber> seen(&local_zone);
   worklist.push(std::make_pair(assessment, virtual_register));
   seen.insert(block_id);
 
@@ -447,7 +472,11 @@ void RegisterAllocatorVerifier::ValidateFinalAssessment(
   // is virtual_register.
   const PendingAssessment* old = assessment->original_pending_assessment();
   CHECK_NOT_NULL(old);
-  ValidatePendingAssessment(block_id, op, current_assessments, old,
+  RpoNumber old_block = old->origin()->rpo_number();
+  DCHECK_LE(old_block, block_id);
+  BlockAssessments* old_block_assessments =
+      old_block == block_id ? current_assessments : assessments_[old_block];
+  ValidatePendingAssessment(old_block, op, old_block_assessments, old,
                             virtual_register);
 }
 

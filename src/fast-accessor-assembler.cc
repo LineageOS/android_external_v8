@@ -8,20 +8,23 @@
 #include "src/code-stub-assembler.h"
 #include "src/code-stubs.h"  // For CallApiCallbackStub.
 #include "src/handles-inl.h"
+#include "src/objects-inl.h"
 #include "src/objects.h"  // For FAA::LoadInternalField impl.
-
-using v8::internal::CodeStubAssembler;
-using v8::internal::compiler::Node;
 
 namespace v8 {
 namespace internal {
 
+using compiler::Node;
+using compiler::CodeAssemblerLabel;
+using compiler::CodeAssemblerVariable;
+
 FastAccessorAssembler::FastAccessorAssembler(Isolate* isolate)
-    : zone_(isolate->allocator()),
+    : zone_(isolate->allocator(), ZONE_NAME),
       isolate_(isolate),
-      assembler_(new CodeStubAssembler(isolate, zone(), 1,
-                                       Code::ComputeFlags(Code::STUB),
-                                       "FastAccessorAssembler")),
+      assembler_state_(new compiler::CodeAssemblerState(
+          isolate, zone(), 1, Code::ComputeFlags(Code::STUB),
+          "FastAccessorAssembler")),
+      assembler_(new CodeStubAssembler(assembler_state_.get())),
       state_(kBuilding) {}
 
 FastAccessorAssembler::~FastAccessorAssembler() { Clear(); }
@@ -40,50 +43,25 @@ FastAccessorAssembler::ValueId FastAccessorAssembler::GetReceiver() {
 }
 
 FastAccessorAssembler::ValueId FastAccessorAssembler::LoadInternalField(
-    ValueId value, int field_no) {
+    ValueId value_id, int field_no) {
   CHECK_EQ(kBuilding, state_);
 
-  // Determine the 'value' object's instance type.
-  Node* object_map = assembler_->LoadObjectField(
-      FromId(value), Internals::kHeapObjectMapOffset, MachineType::Pointer());
-  Node* instance_type = assembler_->WordAnd(
-      assembler_->LoadObjectField(object_map,
-                                  Internals::kMapInstanceTypeAndBitFieldOffset,
-                                  MachineType::Uint16()),
-      assembler_->IntPtrConstant(0xff));
+  CodeAssemblerVariable result(assembler_.get(),
+                               MachineRepresentation::kTagged);
+  LabelId is_not_jsobject = MakeLabel();
+  CodeAssemblerLabel merge(assembler_.get(), &result);
 
-  // Check whether we have a proper JSObject.
-  CodeStubAssembler::Variable result(assembler_.get(),
-                                     MachineRepresentation::kTagged);
-  CodeStubAssembler::Label is_jsobject(assembler_.get());
-  CodeStubAssembler::Label maybe_api_object(assembler_.get());
-  CodeStubAssembler::Label is_not_jsobject(assembler_.get());
-  CodeStubAssembler::Label merge(assembler_.get(), &result);
-  assembler_->Branch(
-      assembler_->WordEqual(
-          instance_type, assembler_->IntPtrConstant(Internals::kJSObjectType)),
-      &is_jsobject, &maybe_api_object);
+  CheckIsJSObjectOrJump(value_id, is_not_jsobject);
 
-  // JSObject? Then load the internal field field_no.
-  assembler_->Bind(&is_jsobject);
   Node* internal_field = assembler_->LoadObjectField(
-      FromId(value), JSObject::kHeaderSize + kPointerSize * field_no,
-      MachineType::Pointer());
+      FromId(value_id), JSObject::kHeaderSize + kPointerSize * field_no);
+
   result.Bind(internal_field);
   assembler_->Goto(&merge);
 
-  assembler_->Bind(&maybe_api_object);
-  assembler_->Branch(
-      assembler_->WordEqual(instance_type, assembler_->IntPtrConstant(
-                                               Internals::kJSApiObjectType)),
-      &is_jsobject, &is_not_jsobject);
-
-  // No JSObject? Return undefined.
-  // TODO(vogelheim): Check whether this is the appropriate action, or whether
-  //                  the method should take a label instead.
-  assembler_->Bind(&is_not_jsobject);
-  Node* fail_value = assembler_->UndefinedConstant();
-  result.Bind(fail_value);
+  // Return null, mimicking the C++ counterpart.
+  SetLabel(is_not_jsobject);
+  result.Bind(assembler_->NullConstant());
   assembler_->Goto(&merge);
 
   // Return.
@@ -91,47 +69,76 @@ FastAccessorAssembler::ValueId FastAccessorAssembler::LoadInternalField(
   return FromRaw(result.value());
 }
 
-FastAccessorAssembler::ValueId FastAccessorAssembler::LoadValue(ValueId value,
-                                                                int offset) {
+FastAccessorAssembler::ValueId
+FastAccessorAssembler::LoadInternalFieldUnchecked(ValueId value_id,
+                                                  int field_no) {
   CHECK_EQ(kBuilding, state_);
-  return FromRaw(assembler_->LoadBufferObject(FromId(value), offset,
+
+  // Defensive debug checks.
+  if (FLAG_debug_code) {
+    LabelId is_jsobject = MakeLabel();
+    LabelId is_not_jsobject = MakeLabel();
+    CheckIsJSObjectOrJump(value_id, is_not_jsobject);
+    assembler_->Goto(FromId(is_jsobject));
+
+    SetLabel(is_not_jsobject);
+    assembler_->DebugBreak();
+    assembler_->Goto(FromId(is_jsobject));
+
+    SetLabel(is_jsobject);
+  }
+
+  Node* result = assembler_->LoadObjectField(
+      FromId(value_id), JSObject::kHeaderSize + kPointerSize * field_no);
+
+  return FromRaw(result);
+}
+
+FastAccessorAssembler::ValueId FastAccessorAssembler::LoadValue(
+    ValueId value_id, int offset) {
+  CHECK_EQ(kBuilding, state_);
+  return FromRaw(assembler_->LoadBufferObject(FromId(value_id), offset,
                                               MachineType::IntPtr()));
 }
 
-FastAccessorAssembler::ValueId FastAccessorAssembler::LoadObject(ValueId value,
-                                                                 int offset) {
+FastAccessorAssembler::ValueId FastAccessorAssembler::LoadObject(
+    ValueId value_id, int offset) {
   CHECK_EQ(kBuilding, state_);
   return FromRaw(assembler_->LoadBufferObject(
-      assembler_->LoadBufferObject(FromId(value), offset,
-                                   MachineType::Pointer()),
-      0, MachineType::AnyTagged()));
+      assembler_->LoadBufferObject(FromId(value_id), offset), 0,
+      MachineType::AnyTagged()));
 }
 
-void FastAccessorAssembler::ReturnValue(ValueId value) {
+FastAccessorAssembler::ValueId FastAccessorAssembler::ToSmi(ValueId value_id) {
   CHECK_EQ(kBuilding, state_);
-  assembler_->Return(FromId(value));
+  return FromRaw(assembler_->SmiTag(FromId(value_id)));
 }
 
-void FastAccessorAssembler::CheckFlagSetOrReturnNull(ValueId value, int mask) {
+void FastAccessorAssembler::ReturnValue(ValueId value_id) {
   CHECK_EQ(kBuilding, state_);
-  CodeStubAssembler::Label pass(assembler_.get());
-  CodeStubAssembler::Label fail(assembler_.get());
+  assembler_->Return(FromId(value_id));
+}
+
+void FastAccessorAssembler::CheckFlagSetOrReturnNull(ValueId value_id,
+                                                     int mask) {
+  CHECK_EQ(kBuilding, state_);
+  CodeAssemblerLabel pass(assembler_.get());
+  CodeAssemblerLabel fail(assembler_.get());
+  Node* value = FromId(value_id);
   assembler_->Branch(
-      assembler_->Word32Equal(
-          assembler_->Word32And(FromId(value), assembler_->Int32Constant(mask)),
-          assembler_->Int32Constant(0)),
+      assembler_->IsSetWord(assembler_->BitcastTaggedToWord(value), mask),
       &pass, &fail);
   assembler_->Bind(&fail);
   assembler_->Return(assembler_->NullConstant());
   assembler_->Bind(&pass);
 }
 
-void FastAccessorAssembler::CheckNotZeroOrReturnNull(ValueId value) {
+void FastAccessorAssembler::CheckNotZeroOrReturnNull(ValueId value_id) {
   CHECK_EQ(kBuilding, state_);
-  CodeStubAssembler::Label is_null(assembler_.get());
-  CodeStubAssembler::Label not_null(assembler_.get());
+  CodeAssemblerLabel is_null(assembler_.get());
+  CodeAssemblerLabel not_null(assembler_.get());
   assembler_->Branch(
-      assembler_->WordEqual(FromId(value), assembler_->IntPtrConstant(0)),
+      assembler_->WordEqual(FromId(value_id), assembler_->SmiConstant(0)),
       &is_null, &not_null);
   assembler_->Bind(&is_null);
   assembler_->Return(assembler_->NullConstant());
@@ -140,7 +147,7 @@ void FastAccessorAssembler::CheckNotZeroOrReturnNull(ValueId value) {
 
 FastAccessorAssembler::LabelId FastAccessorAssembler::MakeLabel() {
   CHECK_EQ(kBuilding, state_);
-  return FromRaw(new CodeStubAssembler::Label(assembler_.get()));
+  return FromRaw(new CodeAssemblerLabel(assembler_.get()));
 }
 
 void FastAccessorAssembler::SetLabel(LabelId label_id) {
@@ -148,13 +155,18 @@ void FastAccessorAssembler::SetLabel(LabelId label_id) {
   assembler_->Bind(FromId(label_id));
 }
 
+void FastAccessorAssembler::Goto(LabelId label_id) {
+  CHECK_EQ(kBuilding, state_);
+  assembler_->Goto(FromId(label_id));
+}
+
 void FastAccessorAssembler::CheckNotZeroOrJump(ValueId value_id,
                                                LabelId label_id) {
   CHECK_EQ(kBuilding, state_);
-  CodeStubAssembler::Label pass(assembler_.get());
+  CodeAssemblerLabel pass(assembler_.get());
   assembler_->Branch(
-      assembler_->WordEqual(FromId(value_id), assembler_->IntPtrConstant(0)),
-      &pass, FromId(label_id));
+      assembler_->WordEqual(FromId(value_id), assembler_->SmiConstant(0)),
+      FromId(label_id), &pass);
   assembler_->Bind(&pass);
 }
 
@@ -168,34 +180,54 @@ FastAccessorAssembler::ValueId FastAccessorAssembler::Call(
                              ExternalReference::DIRECT_API_CALL, isolate());
 
   // Create & call API callback via stub.
-  CallApiCallbackStub stub(isolate(), 1, true);
-  DCHECK_EQ(5, stub.GetCallInterfaceDescriptor().GetParameterCount());
-  DCHECK_EQ(1, stub.GetCallInterfaceDescriptor().GetStackParameterCount());
-  // TODO(vogelheim): There is currently no clean way to retrieve the context
-  //     parameter for a stub and the implementation details are hidden in
-  //     compiler/*. The context_paramter is computed as:
-  //       Linkage::GetJSCallContextParamIndex(descriptor->JSParameterCount())
-  const int context_parameter = 2;
+  const int kJSParameterCount = 1;
+  CallApiCallbackStub stub(isolate(), kJSParameterCount, true, true);
+  CallInterfaceDescriptor descriptor = stub.GetCallInterfaceDescriptor();
+  DCHECK_EQ(4, descriptor.GetParameterCount());
+  DCHECK_EQ(0, descriptor.GetStackParameterCount());
+  Node* context = assembler_->GetJSContextParameter();
+  Node* target = assembler_->HeapConstant(stub.GetCode());
+
   Node* call = assembler_->CallStub(
-      stub.GetCallInterfaceDescriptor(),
-      assembler_->HeapConstant(stub.GetCode()),
-      assembler_->Parameter(context_parameter),
-
-      // Stub/register parameters:
-      assembler_->Parameter(0),               /* receiver (use accessor's) */
-      assembler_->UndefinedConstant(),        /* call_data (undefined) */
-      assembler_->NullConstant(),             /* holder (null) */
-      assembler_->ExternalConstant(callback), /* API callback function */
-
-      // JS arguments, on stack:
-      FromId(arg));
-
+      descriptor, target, context,
+      assembler_->UndefinedConstant(),  // callee (there's no JSFunction)
+      assembler_->UndefinedConstant(),  // call_data (undefined)
+      assembler_->Parameter(0),  // receiver (same as holder in this case)
+      assembler_->ExternalConstant(callback),  // API callback function
+      FromId(arg));                            // JS argument, on stack
   return FromRaw(call);
+}
+
+void FastAccessorAssembler::CheckIsJSObjectOrJump(ValueId value_id,
+                                                  LabelId label_id) {
+  CHECK_EQ(kBuilding, state_);
+
+  // Determine the 'value' object's instance type.
+  Node* instance_type = assembler_->LoadInstanceType(FromId(value_id));
+
+  CodeAssemblerLabel is_jsobject(assembler_.get());
+
+  // Check whether we have a proper JSObject.
+  assembler_->GotoIf(
+      assembler_->Word32Equal(
+          instance_type, assembler_->Int32Constant(Internals::kJSObjectType)),
+      &is_jsobject);
+
+  // JSApiObject?.
+  assembler_->GotoIfNot(
+      assembler_->Word32Equal(instance_type, assembler_->Int32Constant(
+                                                 Internals::kJSApiObjectType)),
+      FromId(label_id));
+
+  // Continue.
+  assembler_->Goto(&is_jsobject);
+  assembler_->Bind(&is_jsobject);
 }
 
 MaybeHandle<Code> FastAccessorAssembler::Build() {
   CHECK_EQ(kBuilding, state_);
-  Handle<Code> code = assembler_->GenerateCode();
+  Handle<Code> code =
+      compiler::CodeAssembler::GenerateCode(assembler_state_.get());
   state_ = !code.is_null() ? kBuilt : kError;
   Clear();
   return code;
@@ -203,12 +235,12 @@ MaybeHandle<Code> FastAccessorAssembler::Build() {
 
 FastAccessorAssembler::ValueId FastAccessorAssembler::FromRaw(Node* node) {
   nodes_.push_back(node);
-  ValueId value = {nodes_.size() - 1};
-  return value;
+  ValueId value_id = {nodes_.size() - 1};
+  return value_id;
 }
 
 FastAccessorAssembler::LabelId FastAccessorAssembler::FromRaw(
-    CodeStubAssembler::Label* label) {
+    CodeAssemblerLabel* label) {
   labels_.push_back(label);
   LabelId label_id = {labels_.size() - 1};
   return label_id;
@@ -220,7 +252,7 @@ Node* FastAccessorAssembler::FromId(ValueId value) const {
   return nodes_.at(value.value_id);
 }
 
-CodeStubAssembler::Label* FastAccessorAssembler::FromId(LabelId label) const {
+CodeAssemblerLabel* FastAccessorAssembler::FromId(LabelId label) const {
   CHECK_LT(label.label_id, labels_.size());
   CHECK_NOT_NULL(labels_.at(label.label_id));
   return labels_.at(label.label_id);
