@@ -12,28 +12,49 @@
 #include "src/profiler/cpu-profiler-inl.h"
 #include "src/vm-state-inl.h"
 
-#include "include/v8-profiler.h"
-
 namespace v8 {
 namespace internal {
 
 static const int kProfilerStackSize = 64 * KB;
 
+class CpuSampler : public sampler::Sampler {
+ public:
+  CpuSampler(Isolate* isolate, ProfilerEventsProcessor* processor)
+      : sampler::Sampler(reinterpret_cast<v8::Isolate*>(isolate)),
+        processor_(processor) {}
 
-ProfilerEventsProcessor::ProfilerEventsProcessor(ProfileGenerator* generator,
-                                                 sampler::Sampler* sampler,
+  void SampleStack(const v8::RegisterState& regs) override {
+    TickSample* sample = processor_->StartTickSample();
+    if (sample == nullptr) return;
+    Isolate* isolate = reinterpret_cast<Isolate*>(this->isolate());
+    sample->Init(isolate, regs, TickSample::kIncludeCEntryFrame, true);
+    if (is_counting_samples_ && !sample->timestamp.IsNull()) {
+      if (sample->state == JS) ++js_sample_count_;
+      if (sample->state == EXTERNAL) ++external_sample_count_;
+    }
+    processor_->FinishTickSample();
+  }
+
+ private:
+  ProfilerEventsProcessor* processor_;
+};
+
+ProfilerEventsProcessor::ProfilerEventsProcessor(Isolate* isolate,
+                                                 ProfileGenerator* generator,
                                                  base::TimeDelta period)
     : Thread(Thread::Options("v8:ProfEvntProc", kProfilerStackSize)),
       generator_(generator),
-      sampler_(sampler),
+      sampler_(new CpuSampler(isolate, this)),
       running_(1),
       period_(period),
       last_code_event_id_(0),
-      last_processed_code_event_id_(0) {}
+      last_processed_code_event_id_(0) {
+  sampler_->IncreaseProfilingDepth();
+}
 
-
-ProfilerEventsProcessor::~ProfilerEventsProcessor() {}
-
+ProfilerEventsProcessor::~ProfilerEventsProcessor() {
+  sampler_->DecreaseProfilingDepth();
+}
 
 void ProfilerEventsProcessor::Enqueue(const CodeEventsContainer& event) {
   event.generic.order = last_code_event_id_.Increment(1);
@@ -49,7 +70,7 @@ void ProfilerEventsProcessor::AddDeoptStack(Isolate* isolate, Address from,
   regs.sp = fp - fp_to_sp_delta;
   regs.fp = fp;
   regs.pc = from;
-  record.sample.Init(isolate, regs, TickSample::kSkipCEntryFrame, false);
+  record.sample.Init(isolate, regs, TickSample::kSkipCEntryFrame, false, false);
   ticks_from_vm_buffer_.Enqueue(record);
 }
 
@@ -64,7 +85,8 @@ void ProfilerEventsProcessor::AddCurrentStack(Isolate* isolate,
     regs.fp = frame->fp();
     regs.pc = frame->pc();
   }
-  record.sample.Init(isolate, regs, TickSample::kSkipCEntryFrame, update_stats);
+  record.sample.Init(isolate, regs, TickSample::kSkipCEntryFrame, update_stats,
+                     false);
   ticks_from_vm_buffer_.Enqueue(record);
 }
 
@@ -255,6 +277,21 @@ void CpuProfiler::ResetProfiles() {
   profiles_->set_cpu_profiler(this);
 }
 
+void CpuProfiler::CreateEntriesForRuntimeCallStats() {
+  static_entries_.clear();
+  RuntimeCallStats* rcs = isolate_->counters()->runtime_call_stats();
+  CodeMap* code_map = generator_->code_map();
+  for (int i = 0; i < RuntimeCallStats::counters_count; ++i) {
+    RuntimeCallCounter* counter = &(rcs->*(RuntimeCallStats::counters[i]));
+    DCHECK(counter->name());
+    std::unique_ptr<CodeEntry> entry(
+        new CodeEntry(CodeEventListener::FUNCTION_TAG, counter->name(),
+                      CodeEntry::kEmptyNamePrefix, "native V8Runtime"));
+    code_map->AddCode(reinterpret_cast<Address>(counter), entry.get(), 1);
+    static_entries_.push_back(std::move(entry));
+  }
+}
+
 void CpuProfiler::CollectSample() {
   if (processor_) {
     processor_->AddCurrentStack(isolate_);
@@ -283,10 +320,10 @@ void CpuProfiler::StartProcessorIfNotStarted() {
   // Disable logging when using the new implementation.
   saved_is_logging_ = logger->is_logging_;
   logger->is_logging_ = false;
-  sampler::Sampler* sampler = logger->sampler();
   generator_.reset(new ProfileGenerator(profiles_.get()));
-  processor_.reset(new ProfilerEventsProcessor(generator_.get(), sampler,
+  processor_.reset(new ProfilerEventsProcessor(isolate_, generator_.get(),
                                                sampling_interval_));
+  CreateEntriesForRuntimeCallStats();
   logger->SetUpProfilerListener();
   ProfilerListener* profiler_listener = logger->profiler_listener();
   profiler_listener->AddObserver(this);
@@ -301,43 +338,27 @@ void CpuProfiler::StartProcessorIfNotStarted() {
   logger->LogAccessorCallbacks();
   LogBuiltins();
   // Enable stack sampling.
-  sampler->SetHasProcessingThread(true);
-  sampler->IncreaseProfilingDepth();
   processor_->AddCurrentStack(isolate_);
   processor_->StartSynchronously();
 }
 
-
 CpuProfile* CpuProfiler::StopProfiling(const char* title) {
   if (!is_profiling_) return nullptr;
   StopProcessorIfLastProfile(title);
-  CpuProfile* result = profiles_->StopProfiling(title);
-  if (result) {
-    result->Print();
-  }
-  return result;
+  return profiles_->StopProfiling(title);
 }
-
 
 CpuProfile* CpuProfiler::StopProfiling(String* title) {
-  if (!is_profiling_) return nullptr;
-  const char* profile_title = profiles_->GetName(title);
-  StopProcessorIfLastProfile(profile_title);
-  return profiles_->StopProfiling(profile_title);
+  return StopProfiling(profiles_->GetName(title));
 }
-
 
 void CpuProfiler::StopProcessorIfLastProfile(const char* title) {
-  if (profiles_->IsLastProfile(title)) {
-    StopProcessor();
-  }
+  if (!profiles_->IsLastProfile(title)) return;
+  StopProcessor();
 }
-
 
 void CpuProfiler::StopProcessor() {
   Logger* logger = isolate_->logger();
-  sampler::Sampler* sampler =
-      reinterpret_cast<sampler::Sampler*>(logger->ticker_);
   is_profiling_ = false;
   isolate_->set_is_profiling(false);
   ProfilerListener* profiler_listener = logger->profiler_listener();
@@ -346,8 +367,6 @@ void CpuProfiler::StopProcessor() {
   logger->TearDownProfilerListener();
   processor_.reset();
   generator_.reset();
-  sampler->SetHasProcessingThread(false);
-  sampler->DecreaseProfilingDepth();
   logger->is_logging_ = saved_is_logging_;
 }
 

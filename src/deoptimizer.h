@@ -6,8 +6,10 @@
 #define V8_DEOPTIMIZER_H_
 
 #include "src/allocation.h"
+#include "src/deoptimize-reason.h"
 #include "src/macro-assembler.h"
-
+#include "src/source-position.h"
+#include "src/zone/zone-chunk-list.h"
 
 namespace v8 {
 namespace internal {
@@ -17,6 +19,37 @@ class TranslationIterator;
 class DeoptimizedFrameInfo;
 class TranslatedState;
 class RegisterValues;
+
+// Safety wrapper for a 32-bit floating-point value to make sure we don't loose
+// the exact bit pattern during deoptimization when passing this value. Note
+// that there is intentionally no way to construct it from a {float} value.
+class Float32 {
+ public:
+  Float32() : bit_pattern_(0) {}
+  uint32_t get_bits() const { return bit_pattern_; }
+  float get_scalar() const { return bit_cast<float>(bit_pattern_); }
+  static Float32 FromBits(uint32_t bits) { return Float32(bits); }
+
+ private:
+  explicit Float32(uint32_t bit_pattern) : bit_pattern_(bit_pattern) {}
+  uint32_t bit_pattern_;
+};
+
+// Safety wrapper for a 64-bit floating-point value to make sure we don't loose
+// the exact bit pattern during deoptimization when passing this value. Note
+// that there is intentionally no way to construct it from a {double} value.
+class Float64 {
+ public:
+  Float64() : bit_pattern_(0) {}
+  uint64_t get_bits() const { return bit_pattern_; }
+  double get_scalar() const { return bit_cast<double>(bit_pattern_); }
+  bool is_hole_nan() const { return bit_pattern_ == kHoleNanInt64; }
+  static Float64 FromBits(uint64_t bits) { return Float64(bits); }
+
+ private:
+  explicit Float64(uint64_t bit_pattern) : bit_pattern_(bit_pattern) {}
+  uint64_t bit_pattern_;
+};
 
 class TranslatedValue {
  public:
@@ -62,8 +95,8 @@ class TranslatedValue {
   static TranslatedValue NewDeferredObject(TranslatedState* container,
                                            int length, int object_index);
   static TranslatedValue NewDuplicateObject(TranslatedState* container, int id);
-  static TranslatedValue NewFloat(TranslatedState* container, float value);
-  static TranslatedValue NewDouble(TranslatedState* container, double value);
+  static TranslatedValue NewFloat(TranslatedState* container, Float32 value);
+  static TranslatedValue NewDouble(TranslatedState* container, Float64 value);
   static TranslatedValue NewInt32(TranslatedState* container, int32_t value);
   static TranslatedValue NewUInt32(TranslatedState* container, uint32_t value);
   static TranslatedValue NewBool(TranslatedState* container, uint32_t value);
@@ -96,9 +129,9 @@ class TranslatedValue {
     // kind is kInt32.
     int32_t int32_value_;
     // kind is kFloat
-    float float_value_;
+    Float32 float_value_;
     // kind is kDouble
-    double double_value_;
+    Float64 double_value_;
     // kind is kDuplicatedObject or kArgumentsObject or kCapturedObject.
     MaterializedObjectInfo materialization_info_;
   };
@@ -107,8 +140,8 @@ class TranslatedValue {
   Object* raw_literal() const;
   int32_t int32_value() const;
   uint32_t uint32_value() const;
-  float float_value() const;
-  double double_value() const;
+  Float32 float_value() const;
+  Float64 double_value() const;
   int object_length() const;
   int object_index() const;
 };
@@ -193,7 +226,8 @@ class TranslatedFrame {
   static TranslatedFrame ArgumentsAdaptorFrame(SharedFunctionInfo* shared_info,
                                                int height);
   static TranslatedFrame TailCallerFrame(SharedFunctionInfo* shared_info);
-  static TranslatedFrame ConstructStubFrame(SharedFunctionInfo* shared_info,
+  static TranslatedFrame ConstructStubFrame(BailoutId bailout_id,
+                                            SharedFunctionInfo* shared_info,
                                             int height);
   static TranslatedFrame CompiledStubFrame(int height, Isolate* isolate) {
     return TranslatedFrame(kCompiledStub, isolate, nullptr, height);
@@ -252,7 +286,7 @@ class TranslatedState {
   void Prepare(bool has_adapted_arguments, Address stack_frame_pointer);
 
   // Store newly materialized values into the isolate.
-  void StoreMaterializedValuesAndDeopt();
+  void StoreMaterializedValuesAndDeopt(JavaScriptFrame* frame);
 
   typedef std::vector<TranslatedFrame>::iterator iterator;
   iterator begin() { return frames_.begin(); }
@@ -290,9 +324,14 @@ class TranslatedState {
   void UpdateFromPreviouslyMaterializedObjects();
   Handle<Object> MaterializeAt(int frame_index, int* value_index);
   Handle<Object> MaterializeObjectAt(int object_index);
+  class CapturedObjectMaterializer;
+  Handle<Object> MaterializeCapturedObjectAt(TranslatedValue* slot,
+                                             int frame_index, int* value_index);
   bool GetAdaptedArguments(Handle<JSObject>* result, int frame_index);
 
   static uint32_t GetUInt32Slot(Address fp, int slot_index);
+  static Float32 GetFloatSlot(Address fp, int slot_index);
+  static Float64 GetDoubleSlot(Address fp, int slot_index);
 
   std::vector<TranslatedFrame> frames_;
   Isolate* isolate_;
@@ -322,87 +361,6 @@ class OptimizedFunctionVisitor BASE_EMBEDDED {
   virtual void LeaveContext(Context* context) = 0;
 };
 
-#define DEOPT_MESSAGES_LIST(V)                                                 \
-  V(kAccessCheck, "Access check needed")                                       \
-  V(kNoReason, "no reason")                                                    \
-  V(kConstantGlobalVariableAssignment, "Constant global variable assignment")  \
-  V(kConversionOverflow, "conversion overflow")                                \
-  V(kDivisionByZero, "division by zero")                                       \
-  V(kElementsKindUnhandledInKeyedLoadGenericStub,                              \
-    "ElementsKind unhandled in KeyedLoadGenericStub")                          \
-  V(kExpectedHeapNumber, "Expected heap number")                               \
-  V(kExpectedSmi, "Expected smi")                                              \
-  V(kForcedDeoptToRuntime, "Forced deopt to runtime")                          \
-  V(kHole, "hole")                                                             \
-  V(kHoleyArrayDespitePackedElements_kindFeedback,                             \
-    "Holey array despite packed elements_kind feedback")                       \
-  V(kInstanceMigrationFailed, "instance migration failed")                     \
-  V(kInsufficientTypeFeedbackForCallWithArguments,                             \
-    "Insufficient type feedback for call with arguments")                      \
-  V(kFastPathFailed, "Falling off the fast path")                              \
-  V(kInsufficientTypeFeedbackForCombinedTypeOfBinaryOperation,                 \
-    "Insufficient type feedback for combined type of binary operation")        \
-  V(kInsufficientTypeFeedbackForGenericNamedAccess,                            \
-    "Insufficient type feedback for generic named access")                     \
-  V(kInsufficientTypeFeedbackForKeyedLoad,                                     \
-    "Insufficient type feedback for keyed load")                               \
-  V(kInsufficientTypeFeedbackForKeyedStore,                                    \
-    "Insufficient type feedback for keyed store")                              \
-  V(kInsufficientTypeFeedbackForLHSOfBinaryOperation,                          \
-    "Insufficient type feedback for LHS of binary operation")                  \
-  V(kInsufficientTypeFeedbackForRHSOfBinaryOperation,                          \
-    "Insufficient type feedback for RHS of binary operation")                  \
-  V(kKeyIsNegative, "key is negative")                                         \
-  V(kLiteralsWereDisposed, "literals have been disposed")                      \
-  V(kLostPrecision, "lost precision")                                          \
-  V(kLostPrecisionOrNaN, "lost precision or NaN")                              \
-  V(kMementoFound, "memento found")                                            \
-  V(kMinusZero, "minus zero")                                                  \
-  V(kNaN, "NaN")                                                               \
-  V(kNegativeKeyEncountered, "Negative key encountered")                       \
-  V(kNegativeValue, "negative value")                                          \
-  V(kNoCache, "no cache")                                                      \
-  V(kNonStrictElementsInKeyedLoadGenericStub,                                  \
-    "non-strict elements in KeyedLoadGenericStub")                             \
-  V(kNotADateObject, "not a date object")                                      \
-  V(kNotAHeapNumber, "not a heap number")                                      \
-  V(kNotAHeapNumberUndefinedBoolean, "not a heap number/undefined/true/false") \
-  V(kNotAHeapNumberUndefined, "not a heap number/undefined")                   \
-  V(kNotAJavaScriptObject, "not a JavaScript object")                          \
-  V(kNotASmi, "not a Smi")                                                     \
-  V(kNull, "null")                                                             \
-  V(kOutOfBounds, "out of bounds")                                             \
-  V(kOutsideOfRange, "Outside of range")                                       \
-  V(kOverflow, "overflow")                                                     \
-  V(kProxy, "proxy")                                                           \
-  V(kReceiverWasAGlobalObject, "receiver was a global object")                 \
-  V(kSmi, "Smi")                                                               \
-  V(kTooManyArguments, "too many arguments")                                   \
-  V(kTooManyUndetectableTypes, "Too many undetectable types")                  \
-  V(kTracingElementsTransitions, "Tracing elements transitions")               \
-  V(kTypeMismatchBetweenFeedbackAndConstant,                                   \
-    "Type mismatch between feedback and constant")                             \
-  V(kUndefined, "undefined")                                                   \
-  V(kUnexpectedCellContentsInConstantGlobalStore,                              \
-    "Unexpected cell contents in constant global store")                       \
-  V(kUnexpectedCellContentsInGlobalStore,                                      \
-    "Unexpected cell contents in global store")                                \
-  V(kUnexpectedObject, "unexpected object")                                    \
-  V(kUnexpectedRHSOfBinaryOperation, "Unexpected RHS of binary operation")     \
-  V(kUninitializedBoilerplateInFastClone,                                      \
-    "Uninitialized boilerplate in fast clone")                                 \
-  V(kUninitializedBoilerplateLiterals, "Uninitialized boilerplate literals")   \
-  V(kUnknownMapInPolymorphicAccess, "Unknown map in polymorphic access")       \
-  V(kUnknownMapInPolymorphicCall, "Unknown map in polymorphic call")           \
-  V(kUnknownMapInPolymorphicElementAccess,                                     \
-    "Unknown map in polymorphic element access")                               \
-  V(kUnknownMap, "Unknown map")                                                \
-  V(kValueMismatch, "value mismatch")                                          \
-  V(kWrongInstanceType, "wrong instance type")                                 \
-  V(kWrongMap, "wrong map")                                                    \
-  V(kUndefinedOrNullInForIn, "null or undefined in for-in")                    \
-  V(kUndefinedOrNullInToObject, "null or undefined in ToObject")
-
 class Deoptimizer : public Malloced {
  public:
   enum BailoutType { EAGER, LAZY, SOFT, kLastBailoutType = SOFT };
@@ -423,19 +381,13 @@ class Deoptimizer : public Malloced {
     return nullptr;
   }
 
-#define DEOPT_MESSAGES_CONSTANTS(C, T) C,
-  enum DeoptReason {
-    DEOPT_MESSAGES_LIST(DEOPT_MESSAGES_CONSTANTS) kLastDeoptReason
-  };
-#undef DEOPT_MESSAGES_CONSTANTS
-  static const char* GetDeoptReason(DeoptReason deopt_reason);
-
   struct DeoptInfo {
-    DeoptInfo(SourcePosition position, DeoptReason deopt_reason, int deopt_id)
+    DeoptInfo(SourcePosition position, DeoptimizeReason deopt_reason,
+              int deopt_id)
         : position(position), deopt_reason(deopt_reason), deopt_id(deopt_id) {}
 
     SourcePosition position;
-    DeoptReason deopt_reason;
+    DeoptimizeReason deopt_reason;
     int deopt_id;
 
     static const int kNoDeoptId = -1;
@@ -443,8 +395,10 @@ class Deoptimizer : public Malloced {
 
   static DeoptInfo GetDeoptInfo(Code* code, byte* from);
 
-  static int ComputeSourcePosition(SharedFunctionInfo* shared,
-                                   BailoutId node_id);
+  static int ComputeSourcePositionFromBaselineCode(SharedFunctionInfo* shared,
+                                                   BailoutId node_id);
+  static int ComputeSourcePositionFromBytecodeArray(SharedFunctionInfo* shared,
+                                                    BailoutId node_id);
 
   struct JumpTableEntry : public ZoneObject {
     inline JumpTableEntry(Address entry, const DeoptInfo& deopt_info,
@@ -467,8 +421,7 @@ class Deoptimizer : public Malloced {
     bool needs_frame;
   };
 
-  static bool TraceEnabledFor(BailoutType deopt_type,
-                              StackFrame::Type frame_type);
+  static bool TraceEnabledFor(StackFrame::Type frame_type);
   static const char* MessageFor(BailoutType type);
 
   int output_count() const { return output_count_; }
@@ -493,8 +446,6 @@ class Deoptimizer : public Malloced {
   static DeoptimizedFrameInfo* DebuggerInspectableFrame(JavaScriptFrame* frame,
                                                         int jsframe_index,
                                                         Isolate* isolate);
-  static void DeleteDebuggerInspectableFrame(DeoptimizedFrameInfo* info,
-                                             Isolate* isolate);
 
   // Makes sure that there is enough room in the relocation
   // information of a code object to perform lazy deoptimization
@@ -505,8 +456,9 @@ class Deoptimizer : public Malloced {
 
   // Deoptimize the function now. Its current optimized code will never be run
   // again and any activations of the optimized code will get deoptimized when
-  // execution returns.
-  static void DeoptimizeFunction(JSFunction* function);
+  // execution returns. If {code} is specified then the given code is targeted
+  // instead of the function code (e.g. OSR code not installed on function).
+  static void DeoptimizeFunction(JSFunction* function, Code* code = nullptr);
 
   // Deoptimize all code in the given isolate.
   static void DeoptimizeAll(Isolate* isolate);
@@ -586,8 +538,6 @@ class Deoptimizer : public Malloced {
     int count_;
   };
 
-  int ConvertJSFrameIndexToFrameIndex(int jsframe_index);
-
   static size_t GetMaxDeoptTableSize();
 
   static void EnsureCodeForDeoptimizationEntry(Isolate* isolate,
@@ -600,14 +550,9 @@ class Deoptimizer : public Malloced {
   static const int kMinNumberOfEntries = 64;
   static const int kMaxNumberOfEntries = 16384;
 
-  Deoptimizer(Isolate* isolate,
-              JSFunction* function,
-              BailoutType type,
-              unsigned bailout_id,
-              Address from,
-              int fp_to_sp_delta,
-              Code* optimized_code);
-  Code* FindOptimizedCode(JSFunction* function, Code* optimized_code);
+  Deoptimizer(Isolate* isolate, JSFunction* function, BailoutType type,
+              unsigned bailout_id, Address from, int fp_to_sp_delta);
+  Code* FindOptimizedCode(JSFunction* function);
   void PrintFunctionName();
   void DeleteFrameDescriptions();
 
@@ -645,8 +590,6 @@ class Deoptimizer : public Malloced {
 
   static unsigned ComputeIncomingArgumentSize(SharedFunctionInfo* shared);
   static unsigned ComputeOutgoingArgumentSize(Code* code, unsigned bailout_id);
-
-  Object* ComputeLiteral(int index) const;
 
   static void GenerateDeoptimizationEntries(
       MacroAssembler* masm, int count, BailoutType type);
@@ -743,12 +686,12 @@ class RegisterValues {
     return registers_[n];
   }
 
-  float GetFloatRegister(unsigned n) const {
+  Float32 GetFloatRegister(unsigned n) const {
     DCHECK(n < arraysize(float_registers_));
     return float_registers_[n];
   }
 
-  double GetDoubleRegister(unsigned n) const {
+  Float64 GetDoubleRegister(unsigned n) const {
     DCHECK(n < arraysize(double_registers_));
     return double_registers_[n];
   }
@@ -758,19 +701,24 @@ class RegisterValues {
     registers_[n] = value;
   }
 
-  void SetFloatRegister(unsigned n, float value) {
+  void SetFloatRegister(unsigned n, Float32 value) {
     DCHECK(n < arraysize(float_registers_));
     float_registers_[n] = value;
   }
 
-  void SetDoubleRegister(unsigned n, double value) {
+  void SetDoubleRegister(unsigned n, Float64 value) {
     DCHECK(n < arraysize(double_registers_));
     double_registers_[n] = value;
   }
 
+  // Generated code is writing directly into the below arrays, make sure their
+  // element sizes fit what the machine instructions expect.
+  static_assert(sizeof(Float32) == kFloatSize, "size mismatch");
+  static_assert(sizeof(Float64) == kDoubleSize, "size mismatch");
+
   intptr_t registers_[Register::kNumRegisters];
-  float float_registers_[FloatRegister::kMaxNumRegisters];
-  double double_registers_[DoubleRegister::kMaxNumRegisters];
+  Float32 float_registers_[FloatRegister::kMaxNumRegisters];
+  Float64 double_registers_[DoubleRegister::kMaxNumRegisters];
 };
 
 
@@ -796,8 +744,6 @@ class FrameDescription {
     DCHECK(static_cast<uint32_t>(frame_size_) == frame_size_);
     return static_cast<uint32_t>(frame_size_);
   }
-
-  unsigned GetOffsetFromSlotIndex(int slot_index);
 
   intptr_t GetFrameSlot(unsigned offset) {
     return *GetFrameSlotPointer(offset);
@@ -825,7 +771,7 @@ class FrameDescription {
     return register_values_.GetRegister(n);
   }
 
-  double GetDoubleRegister(unsigned n) const {
+  Float64 GetDoubleRegister(unsigned n) const {
     return register_values_.GetDoubleRegister(n);
   }
 
@@ -833,7 +779,7 @@ class FrameDescription {
     register_values_.SetRegister(n, value);
   }
 
-  void SetDoubleRegister(unsigned n, double value) {
+  void SetDoubleRegister(unsigned n, Float64 value) {
     register_values_.SetDoubleRegister(n, value);
   }
 
@@ -919,8 +865,6 @@ class FrameDescription {
     return reinterpret_cast<intptr_t*>(
         reinterpret_cast<Address>(this) + frame_content_offset() + offset);
   }
-
-  int ComputeFixedSize();
 };
 
 
@@ -944,15 +888,15 @@ class DeoptimizerData {
 
 class TranslationBuffer BASE_EMBEDDED {
  public:
-  explicit TranslationBuffer(Zone* zone) : contents_(256, zone) { }
+  explicit TranslationBuffer(Zone* zone) : contents_(zone) {}
 
-  int CurrentIndex() const { return contents_.length(); }
-  void Add(int32_t value, Zone* zone);
+  int CurrentIndex() const { return static_cast<int>(contents_.size()); }
+  void Add(int32_t value);
 
   Handle<ByteArray> CreateByteArray(Factory* factory);
 
  private:
-  ZoneList<uint8_t> contents_;
+  ZoneChunkList<uint8_t> contents_;
 };
 
 
@@ -1017,9 +961,9 @@ class Translation BASE_EMBEDDED {
       : buffer_(buffer),
         index_(buffer->CurrentIndex()),
         zone_(zone) {
-    buffer_->Add(BEGIN, zone);
-    buffer_->Add(frame_count, zone);
-    buffer_->Add(jsframe_count, zone);
+    buffer_->Add(BEGIN);
+    buffer_->Add(frame_count);
+    buffer_->Add(jsframe_count);
   }
 
   int index() const { return index_; }
@@ -1031,7 +975,8 @@ class Translation BASE_EMBEDDED {
   void BeginCompiledStubFrame(int height);
   void BeginArgumentsAdaptorFrame(int literal_id, unsigned height);
   void BeginTailCallerFrame(int literal_id);
-  void BeginConstructStubFrame(int literal_id, unsigned height);
+  void BeginConstructStubFrame(BailoutId bailout_id, int literal_id,
+                               unsigned height);
   void BeginGetterStubFrame(int literal_id);
   void BeginSetterStubFrame(int literal_id);
   void BeginArgumentsObject(int args_length);
