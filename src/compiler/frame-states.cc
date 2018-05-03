@@ -6,6 +6,7 @@
 
 #include "src/base/functional.h"
 #include "src/handles-inl.h"
+#include "src/objects-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -63,6 +64,12 @@ std::ostream& operator<<(std::ostream& os, FrameStateType type) {
       break;
     case FrameStateType::kConstructStub:
       os << "CONSTRUCT_STUB";
+      break;
+    case FrameStateType::kGetterStub:
+      os << "GETTER_STUB";
+      break;
+    case FrameStateType::kSetterStub:
+      os << "SETTER_STUB";
       break;
   }
   return os;

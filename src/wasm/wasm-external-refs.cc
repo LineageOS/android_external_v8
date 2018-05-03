@@ -10,6 +10,7 @@
 #include "include/v8config.h"
 
 #include "src/base/bits.h"
+#include "src/utils.h"
 #include "src/wasm/wasm-external-refs.h"
 
 namespace v8 {
@@ -24,13 +25,21 @@ void f32_ceil_wrapper(float* param) { *param = ceilf(*param); }
 
 void f32_nearest_int_wrapper(float* param) { *param = nearbyintf(*param); }
 
-void f64_trunc_wrapper(double* param) { *param = trunc(*param); }
+void f64_trunc_wrapper(double* param) {
+  WriteDoubleValue(param, trunc(ReadDoubleValue(param)));
+}
 
-void f64_floor_wrapper(double* param) { *param = floor(*param); }
+void f64_floor_wrapper(double* param) {
+  WriteDoubleValue(param, floor(ReadDoubleValue(param)));
+}
 
-void f64_ceil_wrapper(double* param) { *param = ceil(*param); }
+void f64_ceil_wrapper(double* param) {
+  WriteDoubleValue(param, ceil(ReadDoubleValue(param)));
+}
 
-void f64_nearest_int_wrapper(double* param) { *param = nearbyint(*param); }
+void f64_nearest_int_wrapper(double* param) {
+  WriteDoubleValue(param, nearbyint(ReadDoubleValue(param)));
+}
 
 void int64_to_float32_wrapper(int64_t* input, float* output) {
   *output = static_cast<float>(*input);
@@ -192,6 +201,24 @@ uint32_t word32_popcnt_wrapper(uint32_t* input) {
 
 uint32_t word64_popcnt_wrapper(uint64_t* input) {
   return static_cast<uint32_t>(base::bits::CountPopulation(*input));
+}
+
+void float64_pow_wrapper(double* param0, double* param1) {
+  double x = ReadDoubleValue(param0);
+  double y = ReadDoubleValue(param1);
+  WriteDoubleValue(param0, Pow(x, y));
+}
+
+static WasmTrapCallbackForTesting wasm_trap_callback_for_testing = nullptr;
+
+void set_trap_callback_for_testing(WasmTrapCallbackForTesting callback) {
+  wasm_trap_callback_for_testing = callback;
+}
+
+void call_trap_callback_for_testing() {
+  if (wasm_trap_callback_for_testing) {
+    wasm_trap_callback_for_testing();
+  }
 }
 
 }  // namespace wasm

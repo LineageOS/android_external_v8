@@ -7,6 +7,7 @@
 
 #include "src/contexts.h"
 #include "src/objects-inl.h"
+#include "src/objects/regexp-match-info.h"
 
 namespace v8 {
 namespace internal {
@@ -67,10 +68,6 @@ void Context::set_extension(HeapObject* object) {
 }
 
 
-JSModule* Context::module() { return JSModule::cast(get(EXTENSION_INDEX)); }
-void Context::set_module(JSModule* module) { set(EXTENSION_INDEX, module); }
-
-
 Context* Context::native_context() {
   Object* result = get(NATIVE_CONTEXT_INDEX);
   DCHECK(IsBootstrappingOrNativeContext(this->GetIsolate(), result));
@@ -122,12 +119,19 @@ bool Context::IsModuleContext() {
   return map == map->GetHeap()->module_context_map();
 }
 
+bool Context::IsEvalContext() {
+  Map* map = this->map();
+  return map == map->GetHeap()->eval_context_map();
+}
 
 bool Context::IsScriptContext() {
   Map* map = this->map();
   return map == map->GetHeap()->script_context_map();
 }
 
+bool Context::OptimizedCodeMapIsCleared() {
+  return osr_code_table() == GetHeap()->empty_fixed_array();
+}
 
 bool Context::HasSameSecurityTokenAs(Context* that) {
   return this->native_context()->security_token() ==

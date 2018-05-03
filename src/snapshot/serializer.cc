@@ -4,6 +4,8 @@
 
 #include "src/snapshot/serializer.h"
 
+#include "src/assembler-inl.h"
+#include "src/heap/heap-inl.h"
 #include "src/macro-assembler.h"
 #include "src/snapshot/natives.h"
 
@@ -16,6 +18,7 @@ Serializer::Serializer(Isolate* isolate)
       root_index_map_(isolate),
       recursion_depth_(0),
       code_address_map_(NULL),
+      num_maps_(0),
       large_objects_total_size_(0),
       seen_large_objects_index_(0) {
   // The serializer is meant to be used only to generate initial heap images
@@ -117,7 +120,8 @@ void Serializer::EncodeReservations(
     }
     out->last().mark_as_last();
   }
-
+  out->Add(SerializedData::Reservation(num_maps_ * Map::kSize));
+  out->last().mark_as_last();
   out->Add(SerializedData::Reservation(large_objects_total_size_));
   out->last().mark_as_last();
 }
@@ -127,15 +131,18 @@ bool Serializer::BackReferenceIsAlreadyAllocated(
     SerializerReference reference) {
   DCHECK(reference.is_back_reference());
   AllocationSpace space = reference.space();
-  int chunk_index = reference.chunk_index();
   if (space == LO_SPACE) {
-    return chunk_index == 0 &&
-           reference.large_object_index() < seen_large_objects_index_;
-  } else if (chunk_index == completed_chunks_[space].length()) {
-    return reference.chunk_offset() < pending_chunk_[space];
+    return reference.large_object_index() < seen_large_objects_index_;
+  } else if (space == MAP_SPACE) {
+    return reference.map_index() < num_maps_;
   } else {
-    return chunk_index < completed_chunks_[space].length() &&
-           reference.chunk_offset() < completed_chunks_[space][chunk_index];
+    int chunk_index = reference.chunk_index();
+    if (chunk_index == completed_chunks_[space].length()) {
+      return reference.chunk_offset() < pending_chunk_[space];
+    } else {
+      return chunk_index < completed_chunks_[space].length() &&
+             reference.chunk_offset() < completed_chunks_[space][chunk_index];
+    }
   }
 }
 #endif  // DEBUG
@@ -207,6 +214,11 @@ void Serializer::PutRoot(int root_index, HeapObject* object,
     PrintF("\n");
   }
 
+  // Assert that the first 32 root array items are a conscious choice. They are
+  // chosen so that the most common ones can be encoded more efficiently.
+  STATIC_ASSERT(Heap::kEmptyDescriptorArrayRootIndex ==
+                kNumberOfRootArrayConstants - 1);
+
   if (how_to_code == kPlain && where_to_point == kStartOfObject &&
       root_index < kNumberOfRootArrayConstants &&
       !isolate()->heap()->InNewSpace(object)) {
@@ -243,6 +255,7 @@ void Serializer::PutAttachedReference(SerializerReference reference,
   DCHECK(reference.is_attached_reference());
   DCHECK((how_to_code == kPlain && where_to_point == kStartOfObject) ||
          (how_to_code == kPlain && where_to_point == kInnerPointer) ||
+         (how_to_code == kFromCode && where_to_point == kStartOfObject) ||
          (how_to_code == kFromCode && where_to_point == kInnerPointer));
   sink_.Put(kAttachedReference + how_to_code + where_to_point, "AttachedRef");
   sink_.PutInt(reference.attached_reference_index(), "AttachedRefIndex");
@@ -264,6 +277,11 @@ SerializerReference Serializer::AllocateLargeObject(int size) {
   // have to keep track of multiple chunks.
   large_objects_total_size_ += size;
   return SerializerReference::LargeObjectReference(seen_large_objects_index_++);
+}
+
+SerializerReference Serializer::AllocateMap() {
+  // Maps are allocated one-by-one when deserializing.
+  return SerializerReference::MapReference(num_maps_++);
 }
 
 SerializerReference Serializer::Allocate(AllocationSpace space, int size) {
@@ -336,6 +354,12 @@ void Serializer::ObjectSerializer::SerializePrologue(AllocationSpace space,
       sink_->Put(NOT_EXECUTABLE, "not executable large object");
     }
     back_reference = serializer_->AllocateLargeObject(size);
+  } else if (space == MAP_SPACE) {
+    DCHECK_EQ(Map::kSize, size);
+    back_reference = serializer_->AllocateMap();
+    sink_->Put(kNewObject + reference_representation_ + space, "NewMap");
+    // This is redundant, but we include it anyways.
+    sink_->PutInt(size >> kObjectAlignmentBits, "ObjectSizeInWords");
   } else {
     int fill = serializer_->PutAlignmentPrefix(object_);
     back_reference = serializer_->Allocate(space, size + fill);
@@ -386,9 +410,8 @@ void Serializer::ObjectSerializer::SerializeExternalString() {
         ExternalTwoByteString::cast(string)->resource()->data());
   }
 
-  AllocationSpace space = (allocation_size > Page::kMaxRegularHeapObjectSize)
-                              ? LO_SPACE
-                              : OLD_SPACE;
+  AllocationSpace space =
+      (allocation_size > kMaxRegularHeapObjectSize) ? LO_SPACE : OLD_SPACE;
   SerializePrologue(space, allocation_size, map);
 
   // Output the rest of the imaginary string.
@@ -602,6 +625,7 @@ void Serializer::ObjectSerializer::VisitExternalReference(RelocInfo* rinfo) {
   sink_->Put(kExternalReference + how_to_code + kStartOfObject, "ExternalRef");
   sink_->PutInt(skip, "SkipB4ExternalRef");
   Address target = rinfo->target_external_reference();
+  DCHECK_NOT_NULL(target);  // Code does not reference null.
   sink_->PutInt(serializer_->EncodeExternalReference(target), "reference id");
   bytes_processed_so_far_ += rinfo->target_address_size();
 }

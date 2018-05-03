@@ -11,10 +11,10 @@
 #include "src/field-type.h"
 #include "src/messages.h"
 #include "src/objects-inl.h"
-#include "src/parsing/scanner.h"
 #include "src/parsing/token.h"
 #include "src/property-descriptor.h"
 #include "src/transitions.h"
+#include "src/unicode-cache.h"
 
 namespace v8 {
 namespace internal {
@@ -104,7 +104,7 @@ JsonParser<seq_one_byte>::JsonParser(Isolate* isolate, Handle<String> source)
       source_length_(source->length()),
       isolate_(isolate),
       factory_(isolate_->factory()),
-      zone_(isolate_->allocator()),
+      zone_(isolate_->allocator(), ZONE_NAME),
       object_constructor_(isolate_->native_context()->object_function(),
                           isolate_),
       position_(-1) {
@@ -399,8 +399,8 @@ Handle<Object> JsonParser<seq_one_byte>::ParseJsonObject() {
                    ->NowContains(value)) {
             Handle<FieldType> value_type(
                 value->OptimalType(isolate(), expected_representation));
-            Map::GeneralizeFieldType(target, descriptor,
-                                     expected_representation, value_type);
+            Map::GeneralizeField(target, descriptor, details.constness(),
+                                 expected_representation, value_type);
           }
           DCHECK(target->instance_descriptors()
                      ->GetFieldType(descriptor)
@@ -478,11 +478,12 @@ void JsonParser<seq_one_byte>::CommitStateToJsonObject(
   DCHECK(!json_object->map()->is_dictionary_map());
 
   DisallowHeapAllocation no_gc;
-
+  DescriptorArray* descriptors = json_object->map()->instance_descriptors();
   int length = properties->length();
   for (int i = 0; i < length; i++) {
     Handle<Object> value = (*properties)[i];
-    json_object->WriteToField(i, *value);
+    // Initializing store.
+    json_object->WriteToField(i, descriptors->GetDetails(i), *value);
   }
 }
 
