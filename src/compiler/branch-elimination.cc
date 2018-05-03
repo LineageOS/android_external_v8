@@ -18,7 +18,9 @@ BranchElimination::BranchElimination(Editor* editor, JSGraph* js_graph,
       jsgraph_(js_graph),
       node_conditions_(zone, js_graph->graph()->NodeCount()),
       zone_(zone),
-      dead_(js_graph->graph()->NewNode(js_graph->common()->Dead())) {}
+      dead_(js_graph->graph()->NewNode(js_graph->common()->Dead())) {
+  NodeProperties::SetType(dead_, Type::None());
+}
 
 BranchElimination::~BranchElimination() {}
 
@@ -83,6 +85,7 @@ Reduction BranchElimination::ReduceDeoptimizeConditional(Node* node) {
   DCHECK(node->opcode() == IrOpcode::kDeoptimizeIf ||
          node->opcode() == IrOpcode::kDeoptimizeUnless);
   bool condition_is_true = node->opcode() == IrOpcode::kDeoptimizeUnless;
+  DeoptimizeParameters p = DeoptimizeParametersOf(node->op());
   Node* condition = NodeProperties::GetValueInput(node, 0);
   Node* frame_state = NodeProperties::GetValueInput(node, 1);
   Node* effect = NodeProperties::GetEffectInput(node);
@@ -92,8 +95,7 @@ Reduction BranchElimination::ReduceDeoptimizeConditional(Node* node) {
   // yet because we will have to recompute anyway once we compute the
   // predecessor.
   if (conditions == nullptr) {
-    DCHECK_NULL(node_conditions_.Get(node));
-    return NoChange();
+    return UpdateConditions(node, conditions);
   }
   Maybe<bool> condition_value = conditions->LookupCondition(condition);
   if (condition_value.IsJust()) {
@@ -103,7 +105,7 @@ Reduction BranchElimination::ReduceDeoptimizeConditional(Node* node) {
       // with the {control} node that already contains the right information.
       ReplaceWithValue(node, dead(), effect, control);
     } else {
-      control = graph()->NewNode(common()->Deoptimize(DeoptimizeKind::kEager),
+      control = graph()->NewNode(common()->Deoptimize(p.kind(), p.reason()),
                                  frame_state, effect, control);
       // TODO(bmeurer): This should be on the AdvancedReducer somehow.
       NodeProperties::MergeControlToEnd(graph(), common(), control);
@@ -123,8 +125,7 @@ Reduction BranchElimination::ReduceIf(Node* node, bool is_true_branch) {
   // yet because we will have to recompute anyway once we compute the
   // predecessor.
   if (from_branch == nullptr) {
-    DCHECK(node_conditions_.Get(node) == nullptr);
-    return NoChange();
+    return UpdateConditions(node, nullptr);
   }
   Node* condition = branch->InputAt(0);
   return UpdateConditions(
@@ -143,21 +144,27 @@ Reduction BranchElimination::ReduceLoop(Node* node) {
 Reduction BranchElimination::ReduceMerge(Node* node) {
   // Shortcut for the case when we do not know anything about some
   // input.
-  for (int i = 0; i < node->InputCount(); i++) {
-    if (node_conditions_.Get(node->InputAt(i)) == nullptr) {
-      DCHECK(node_conditions_.Get(node) == nullptr);
-      return NoChange();
+  Node::Inputs inputs = node->inputs();
+  for (Node* input : inputs) {
+    if (node_conditions_.Get(input) == nullptr) {
+      return UpdateConditions(node, nullptr);
     }
   }
 
-  const ControlPathConditions* first = node_conditions_.Get(node->InputAt(0));
+  auto input_it = inputs.begin();
+
+  DCHECK_GT(inputs.count(), 0);
+
+  const ControlPathConditions* first = node_conditions_.Get(*input_it);
+  ++input_it;
   // Make a copy of the first input's conditions and merge with the conditions
   // from other inputs.
   ControlPathConditions* conditions =
       new (zone_->New(sizeof(ControlPathConditions)))
           ControlPathConditions(*first);
-  for (int i = 1; i < node->InputCount(); i++) {
-    conditions->Merge(*(node_conditions_.Get(node->InputAt(i))));
+  auto input_end = inputs.end();
+  for (; input_it != input_end; ++input_it) {
+    conditions->Merge(*(node_conditions_.Get(*input_it)));
   }
 
   return UpdateConditions(node, conditions);
@@ -209,7 +216,8 @@ Reduction BranchElimination::UpdateConditions(
   // Only signal that the node has Changed if the condition information has
   // changed.
   if (conditions != original) {
-    if (original == nullptr || *conditions != *original) {
+    if (conditions == nullptr || original == nullptr ||
+        *conditions != *original) {
       node_conditions_.Set(node, conditions);
       return Changed(node);
     }

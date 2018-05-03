@@ -4,10 +4,11 @@
 
 #include "src/gdb-jit.h"
 
+#include <memory>
+
 #include "src/base/bits.h"
 #include "src/base/platform/platform.h"
 #include "src/bootstrapper.h"
-#include "src/compiler.h"
 #include "src/frames-inl.h"
 #include "src/frames.h"
 #include "src/global-handles.h"
@@ -1015,7 +1016,7 @@ class CodeDescription BASE_EMBEDDED {
   }
 #endif
 
-  base::SmartArrayPointer<char> GetFilename() {
+  std::unique_ptr<char[]> GetFilename() {
     return String::cast(script()->name())->ToCString();
   }
 
@@ -1941,7 +1942,7 @@ static void UnregisterCodeEntry(JITCodeEntry* entry) {
 
 static JITCodeEntry* CreateELFObject(CodeDescription* desc, Isolate* isolate) {
 #ifdef __MACH_O
-  Zone zone(isolate->allocator());
+  Zone zone(isolate->allocator(), ZONE_NAME);
   MachO mach_o(&zone);
   Writer w(&mach_o);
 
@@ -1953,7 +1954,7 @@ static JITCodeEntry* CreateELFObject(CodeDescription* desc, Isolate* isolate) {
 
   mach_o.Write(&w, desc->CodeStart(), desc->CodeSize());
 #else
-  Zone zone(isolate->allocator());
+  Zone zone(isolate->allocator(), ZONE_NAME);
   ELF elf(&zone);
   Writer w(&elf);
 
@@ -2015,7 +2016,7 @@ static uint32_t HashCodeAddress(Address addr) {
 static base::HashMap* GetLineMap() {
   static base::HashMap* line_map = NULL;
   if (line_map == NULL) {
-    line_map = new base::HashMap(&base::HashMap::PointersMatch);
+    line_map = new base::HashMap();
   }
   return line_map;
 }
