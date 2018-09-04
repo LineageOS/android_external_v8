@@ -6,6 +6,7 @@ LOCAL_CFLAGS += \
 	-Wall \
 	-Werror \
 	-Wno-endif-labels \
+	-Wno-implicit-fallthrough \
 	-Wno-import \
 	-Wno-format \
 	-Wno-unused-parameter \
