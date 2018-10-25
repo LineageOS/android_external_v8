@@ -1,96 +1,84 @@
 #!/usr/bin/env python
 
 import os
+import subprocess
 
-# Given a list of source files from the V8 gyp file, create a string that
-# can be put into the LOCAL_SRC_FILES makefile variable. One per line, followed
-# by a '\' and with the 'src' directory prepended.
-def _makefileSources(src_list):
+# Reformat the specified Android.bp file
+def _bpFmt(filename):
+  subprocess.check_call(["bpfmt", "-w", filename])
+
+def _bpList(name, entries):
+  return name + ': [' + ",".join(['"' + x + '"' for x in entries]) + '],\n'
+
+# Given a list of source files from the V8 gyp file, create a string that can
+# be put into the bp srcs list. One per line, and with the 'src' directory
+# prepended.
+def _bpSources(src_list):
+  return _bpList('srcs', ['src/' + x for x in src_list])
+
+# Return a string that contains the common header used by the V8 bp files.
+def _bpCommonHeader():
   result = ""
-  for i in xrange(0, len(src_list)):
-    result += '\tsrc/' + src_list[i]
-    if i != len(src_list) - 1:
-      result += ' \\'
-    result += '\n'
+  result += '// GENERATED, do not edit\n'
+  result += '// for changes, see genmakefiles.py\n'
   return result
 
-# Return a string that contains the common header variable setup used in
-# (most of) the V8 makefiles.
-def _makefileCommonHeader(module_name):
+# Return a string that contains the common module header.
+def _bpModuleHeader(module_type, module_name):
   result = ""
-  result += '### GENERATED, do not edit\n'
-  result += '### for changes, see genmakefiles.py\n'
-  result += 'LOCAL_PATH := $(call my-dir)\n'
-  result += 'include $(CLEAR_VARS)\n'
-  result += 'include $(LOCAL_PATH)/Android.v8common.mk\n'
-  result += 'LOCAL_MODULE := ' + module_name + '\n'
+  result += module_type + ' {\n'
+  result += 'name: "' + module_name + '",\n'
+  result += 'defaults: ["v8_defaults"],\n'
   return result
 
-# Write a makefile in the simpler format used by v8_libplatform and
+# Write an Android.bp in the simpler format used by v8_libplatform and
 # v8_libsampler
-def _writeMakefile(filename, module_name, sources):
+def _writeBP(filename, module_name, sources):
   if not sources:
     raise ValueError('No sources for ' + filename)
 
   with open(filename, 'w') as out:
-    out.write(_makefileCommonHeader(module_name))
-    out.write('LOCAL_MODULE_CLASS := STATIC_LIBRARIES\n')
+    out.write(_bpCommonHeader())
+    out.write(_bpModuleHeader("cc_library_static", module_name))
+    out.write(_bpSources(sources))
+    out.write(_bpList('local_include_dirs', ['src', 'include']))
+    out.write('}\n')
 
-    out.write('LOCAL_SRC_FILES := \\\n')
+  _bpFmt(filename)
 
-    out.write(_makefileSources(sources))
-
-    out.write('LOCAL_C_INCLUDES := \\\n')
-    out.write('\t$(LOCAL_PATH)/src \\\n')
-    out.write('\t$(LOCAL_PATH)/include\n')
-
-    out.write('include $(BUILD_STATIC_LIBRARY)\n')
-
-def _writeMkpeepholeMakefile(target):
+def _writeMkpeepholeBP(target):
   if not target:
     raise ValueError('Must specify mkpeephole target properties')
 
-  with open('Android.mkpeephole.mk', 'w') as out:
-    out.write(_makefileCommonHeader('v8mkpeephole'))
-    out.write('LOCAL_SRC_FILES := \\\n')
+  filename = 'Android.mkpeephole.bp'
+  with open(filename, 'w') as out:
+    out.write(_bpCommonHeader())
+
+    out.write(_bpModuleHeader('cc_binary_host', 'v8mkpeephole'))
+
     sources = [x for x in target['sources'] if x.endswith('.cc')]
     sources.sort()
+    out.write(_bpSources(sources))
 
-    out.write(_makefileSources(sources))
+    out.write(_bpList('static_libs', ['libv8base', 'liblog']))
+    out.write('}\n')
 
-    out.write('LOCAL_STATIC_LIBRARIES += libv8base liblog\n')
-    out.write('LOCAL_LDLIBS_linux += -lrt\n')
-    out.write('include $(BUILD_HOST_EXECUTABLE)\n')
+  _bpFmt(filename)
 
-    out.write('include $(CLEAR_VARS)\n')
-    out.write('include $(LOCAL_PATH)/Android.v8common.mk\n')
-    out.write('LOCAL_MODULE := v8peephole\n')
-    out.write('LOCAL_MODULE_CLASS := STATIC_LIBRARIES\n')
-    out.write('generated_sources := $(call local-generated-sources-dir)\n')
-    out.write('PEEPHOLE_TOOL := $(HOST_OUT_EXECUTABLES)/v8mkpeephole\n')
-    out.write('PEEPHOLE_FILE := ' \
-        '$(generated_sources)/bytecode-peephole-table.cc\n')
-    out.write('$(PEEPHOLE_FILE): PRIVATE_CUSTOM_TOOL = ' \
-        '$(PEEPHOLE_TOOL) $(PEEPHOLE_FILE)\n')
-    out.write('$(PEEPHOLE_FILE): $(PEEPHOLE_TOOL)\n')
-    out.write('\t$(transform-generated-source)\n')
-    out.write('LOCAL_GENERATED_SOURCES += $(PEEPHOLE_FILE)\n')
-    out.write('include $(BUILD_STATIC_LIBRARY)\n')
-
-def _writeV8SrcMakefile(target):
+def _writeV8SrcBP(target):
   if not target:
     raise ValueError('Must specify v8_base target properties')
 
-  with open('Android.v8.mk', 'w') as out:
-    out.write(_makefileCommonHeader('libv8src'))
-    out.write('LOCAL_MODULE_CLASS := STATIC_LIBRARIES\n')
-
-    out.write('LOCAL_SRC_FILES := \\\n')
+  filename = 'Android.v8.bp'
+  with open(filename, 'w') as out:
+    out.write(_bpCommonHeader())
+    out.write(_bpModuleHeader('cc_library_static', 'libv8src'))
 
     sources = [x for x in target['sources'] if x.endswith('.cc')]
+    sources = list(set(sources))
     sources.sort()
 
-    out.write(_makefileSources(sources))
+    out.write(_bpSources(sources))
 
     arm_src = None
     arm64_src = None
@@ -121,165 +109,96 @@ def _writeV8SrcMakefile(target):
     mips_src.sort()
     mips64_src.sort()
 
-    out.write('LOCAL_SRC_FILES_arm += \\\n')
-    out.write(_makefileSources(arm_src))
-    out.write('LOCAL_SRC_FILES_arm64 += \\\n')
-    out.write(_makefileSources(arm64_src))
-    out.write('LOCAL_SRC_FILES_mips += \\\n')
-    out.write(_makefileSources(mips_src))
-    out.write('LOCAL_SRC_FILES_mips64 += \\\n')
-    out.write(_makefileSources(mips64_src))
-    out.write('LOCAL_SRC_FILES_x86 += \\\n')
-    out.write(_makefileSources(x86_src))
-    out.write('LOCAL_SRC_FILES_x86_64 += \\\n')
-    out.write(_makefileSources(x86_64_src))
+    out.write('arch: {\n')
+    out.write('arm: {\n')
+    out.write(_bpSources(arm_src))
+    out.write('},\n')
+    out.write('arm64: {\n')
+    out.write(_bpSources(arm64_src))
+    out.write('},\n')
+    out.write('mips: {\n')
+    out.write(_bpSources(mips_src))
+    out.write('},\n')
+    out.write('mips64: {\n')
+    out.write(_bpSources(mips64_src))
+    out.write('},\n')
+    out.write('x86: {\n')
+    out.write(_bpSources(x86_src))
+    out.write('},\n')
+    out.write('x86_64: {\n')
+    out.write(_bpSources(x86_64_src))
+    out.write('},\n')
+    out.write('},\n')
 
-    out.write('# Enable DEBUG option.\n')
-    out.write('ifeq ($(DEBUG_V8),true)\n')
-    out.write('LOCAL_SRC_FILES += \\\n')
-    out.write('\tsrc/objects-debug.cc \\\n')
-    out.write('\tsrc/ast/prettyprinter.cc \\\n')
-    out.write('\tsrc/regexp/regexp-macro-assembler-tracer.cc\n')
-    out.write('endif\n')
-    out.write('LOCAL_C_INCLUDES := \\\n')
-    out.write('\t$(LOCAL_PATH)/src \\\n')
-    out.write('\texternal/icu/icu4c/source/common \\\n')
-    out.write('\texternal/icu/icu4c/source/i18n\n')
-    out.write('include $(BUILD_STATIC_LIBRARY)\n')
+    out.write(_bpList('local_include_dirs', ['src']))
+    out.write(_bpList('include_dirs', ['external/icu/icu4c/source/common', 'external/icu/icu4c/source/i18n']))
+    out.write('}\n')
 
-def _writeGeneratedFilesMakfile(target):
+  _bpFmt(filename)
+
+def _writeGeneratedFilesBP(target):
   if not target:
     raise ValueError('Must specify j2sc target properties')
 
-  with open('Android.v8gen.mk', 'w') as out:
-    out.write(_makefileCommonHeader('libv8gen'))
-    out.write('LOCAL_MODULE_CLASS := STATIC_LIBRARIES\n')
+  filename = 'Android.v8gen.bp'
+  with open(filename, 'w') as out:
+    out.write(_bpCommonHeader())
 
-    sources = target['variables']['library_files']
-    out.write('V8_LOCAL_JS_LIBRARY_FILES := \\\n')
-    out.write(_makefileSources(sources))
+    out.write('filegroup {\n')
+    out.write('name: "v8_js_lib_files",\n')
+    out.write(_bpSources(target['variables']['library_files']))
+    out.write('}\n')
 
-    sources = target['variables']['experimental_library_files']
-    out.write('V8_LOCAL_JS_EXPERIMENTAL_LIBRARY_FILES := \\\n')
-    out.write(_makefileSources(sources))
+    out.write('filegroup {\n')
+    out.write('name: "v8_js_experimental_lib_files",\n')
+    out.write(_bpSources(target['variables']['experimental_library_files']))
+    out.write('}\n')
 
-    out.write('LOCAL_SRC_FILES += src/snapshot/snapshot-empty.cc\n')
+  _bpFmt(filename)
 
-    out.write('LOCAL_JS_LIBRARY_FILES := ' \
-        '$(addprefix $(LOCAL_PATH)/, $(V8_LOCAL_JS_LIBRARY_FILES))\n')
-    out.write('LOCAL_JS_EXPERIMENTAL_LIBRARY_FILES := ' \
-        '$(addprefix $(LOCAL_PATH)/, ' \
-        '$(V8_LOCAL_JS_EXPERIMENTAL_LIBRARY_FILES))\n')
-    out.write('generated_sources := $(call local-generated-sources-dir)\n')
-    out.write('')
-
-    # Copy js2c.py to generated sources directory and invoke there to avoid
-    # generating jsmin.pyc in the source directory
-    out.write('JS2C_PY := ' \
-        '$(generated_sources)/js2c.py $(generated_sources)/jsmin.py\n')
-    out.write('$(JS2C_PY): ' \
-        '$(generated_sources)/%.py : $(LOCAL_PATH)/tools/%.py | $(ACP)\n')
-    out.write('\t@echo "Copying $@"\n')
-    out.write('\t$(copy-file-to-target)\n')
-
-    # Generate libraries.cc
-    out.write('GEN1 := $(generated_sources)/libraries.cc\n')
-    out.write('$(GEN1): SCRIPT := $(generated_sources)/js2c.py\n')
-    out.write('$(GEN1): $(LOCAL_JS_LIBRARY_FILES) $(JS2C_PY)\n')
-    out.write('\t@echo "Generating libraries.cc"\n')
-    out.write('\t@mkdir -p $(dir $@)\n')
-    out.write('\tpython $(SCRIPT) $@ CORE $(LOCAL_JS_LIBRARY_FILES)\n')
-    out.write('V8_GENERATED_LIBRARIES := $(generated_sources)/libraries.cc\n')
-
-    # Generate experimental-libraries.cc
-    out.write('GEN2 := $(generated_sources)/experimental-libraries.cc\n')
-    out.write('$(GEN2): SCRIPT := $(generated_sources)/js2c.py\n')
-    out.write('$(GEN2): $(LOCAL_JS_EXPERIMENTAL_LIBRARY_FILES) $(JS2C_PY)\n')
-    out.write('\t@echo "Generating experimental-libraries.cc"\n')
-    out.write('\t@mkdir -p $(dir $@)\n')
-    out.write('\tpython $(SCRIPT) $@ EXPERIMENTAL ' \
-        '$(LOCAL_JS_EXPERIMENTAL_LIBRARY_FILES)\n')
-    out.write('V8_GENERATED_LIBRARIES ' \
-        '+= $(generated_sources)/experimental-libraries.cc\n')
-
-    # Generate extra-libraries.cc
-    out.write('GEN3 := $(generated_sources)/extra-libraries.cc\n')
-    out.write('$(GEN3): SCRIPT := $(generated_sources)/js2c.py\n')
-    out.write('$(GEN3): $(JS2C_PY)\n')
-    out.write('\t@echo "Generating extra-libraries.cc"\n')
-    out.write('\t@mkdir -p $(dir $@)\n')
-    out.write('\tpython $(SCRIPT) $@ EXTRAS\n')
-    out.write('V8_GENERATED_LIBRARIES ' \
-        '+= $(generated_sources)/extra-libraries.cc\n')
-
-    # Generate experimental-extra-libraries.cc
-    out.write('GEN4 := $(generated_sources)/experimental-extra-libraries.cc\n')
-    out.write('$(GEN4): SCRIPT := $(generated_sources)/js2c.py\n')
-    out.write('$(GEN4): $(JS2C_PY)\n')
-    out.write('\t@echo "Generating experimental-extra-libraries.cc"\n')
-    out.write('\t@mkdir -p $(dir $@)\n')
-    out.write('\tpython $(SCRIPT) $@ EXPERIMENTAL_EXTRAS\n')
-    out.write('V8_GENERATED_LIBRARIES ' \
-        '+= $(generated_sources)/experimental-extra-libraries.cc\n')
-
-    out.write('LOCAL_GENERATED_SOURCES += $(V8_GENERATED_LIBRARIES)\n')
-
-    out.write('include $(BUILD_STATIC_LIBRARY)\n')
-
-def _writeLibBaseMakefile(target):
+def _writeLibBaseBP(target):
   if not target:
     raise ValueError('Must specify v8_libbase target properties')
 
-  with open('Android.base.mk', 'w') as out:
-    out.write(_makefileCommonHeader('libv8base'))
-    out.write('LOCAL_MODULE_CLASS := STATIC_LIBRARIES\n')
-
-    out.write('LOCAL_SRC_FILES := \\\n')
+  filename = 'Android.base.bp'
+  with open(filename, 'w') as out:
+    out.write(_bpCommonHeader())
+    out.write(_bpModuleHeader('cc_library_static', 'libv8base'))
+    out.write('host_supported: true,\n')
 
     sources = [x for x in target['sources'] if x.endswith('.cc')]
     sources += ['base/platform/platform-posix.cc']
     sources.sort()
 
-    out.write(_makefileSources(sources))
-    out.write('LOCAL_SRC_FILES += \\\n')
-    out.write('\tsrc/base/debug/stack_trace_android.cc \\\n')
-    out.write('\tsrc/base/platform/platform-linux.cc\n')
+    out.write(_bpSources(sources))
 
-    out.write('LOCAL_C_INCLUDES := $(LOCAL_PATH)/src\n')
-    out.write('include $(BUILD_STATIC_LIBRARY)\n\n')
+    out.write('local_include_dirs: ["src"],\n')
 
-    out.write('include $(CLEAR_VARS)\n')
+    out.write('target: {\n')
+    out.write('android: {\n')
+    out.write(_bpSources(['base/debug/stack_trace_android.cc']))
+    out.write('},\n')
+    out.write('linux: {\n')
+    out.write(_bpSources(['base/platform/platform-linux.cc']))
+    out.write('},\n')
+    out.write('host: {\n')
+    out.write(_bpSources(['base/debug/stack_trace_posix.cc']))
+    out.write('},\n')
+    out.write('darwin: {\n')
+    out.write(_bpSources(['base/platform/platform-macos.cc']))
+    out.write('},\n')
+    out.write('},\n')
 
-    out.write('include $(LOCAL_PATH)/Android.v8common.mk\n')
+    out.write('}\n')
 
-    # Set up the target identity
-    out.write('LOCAL_MODULE := libv8base\n')
-    out.write('LOCAL_MODULE_CLASS := STATIC_LIBRARIES\n')
-
-    out.write('LOCAL_SRC_FILES := \\\n')
-    out.write(_makefileSources(sources))
-
-    # Host may be linux or darwin.
-    out.write('ifeq ($(HOST_OS),linux)\n')
-    out.write('LOCAL_SRC_FILES += \\\n')
-    out.write('\tsrc/base/debug/stack_trace_posix.cc \\\n')
-    out.write('\tsrc/base/platform/platform-linux.cc\n')
-    out.write('endif\n')
-    out.write('ifeq ($(HOST_OS),darwin)\n')
-    out.write('LOCAL_SRC_FILES += \\\n')
-    out.write('\tsrc/base/debug/stack_trace_posix.cc \\\n')
-    out.write('\tsrc/base/platform/platform-macos.cc\n')
-    out.write('endif\n')
-
-    out.write('LOCAL_C_INCLUDES := $(LOCAL_PATH)/src\n')
-    out.write('include $(BUILD_HOST_STATIC_LIBRARY)\n')
+  _bpFmt(filename)
 
 def GenerateMakefiles():
   # Slurp in the content of the V8 gyp file.
   with open(os.path.join(os.getcwd(), './src/v8.gyp'), 'r') as f:
     gyp = eval(f.read())
 
-  # Find the targets that we're interested in and write out the makefiles.
+  # Find the targets that we're interested in and write out the Android.bps.
   for target in gyp['targets']:
     name = target['target_name']
     sources = None
@@ -288,15 +207,17 @@ def GenerateMakefiles():
       sources.sort()
 
     if name == 'v8_libplatform':
-      _writeMakefile('Android.platform.mk', 'libv8platform', sources)
+      _writeBP('Android.platform.bp', 'libv8platform', sources)
     elif name == 'v8_libsampler':
-      _writeMakefile('Android.sampler.mk', 'libv8sampler', sources)
+      _writeBP('Android.sampler.bp', 'libv8sampler', sources)
     elif name == 'v8_base':
-      _writeV8SrcMakefile(target)
+      _writeV8SrcBP(target)
     elif name == 'mkpeephole':
-      _writeMkpeepholeMakefile(target)
+      _writeMkpeepholeBP(target)
     elif name == 'js2c':
-      _writeGeneratedFilesMakfile(target)
+      _writeGeneratedFilesBP(target)
     elif name == 'v8_libbase':
-      _writeLibBaseMakefile(target)
+      _writeLibBaseBP(target)
 
+if __name__ == '__main__':
+  GenerateMakefiles()
