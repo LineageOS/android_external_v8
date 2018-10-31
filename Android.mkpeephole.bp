@@ -1,0 +1,15 @@
+// GENERATED, do not edit
+// for changes, see genmakefiles.py
+cc_binary_host {
+    name: "v8mkpeephole",
+    defaults: ["v8_defaults"],
+    srcs: [
+        "src/interpreter/bytecode-operands.cc",
+        "src/interpreter/bytecodes.cc",
+        "src/interpreter/mkpeephole.cc",
+    ],
+    static_libs: [
+        "libv8base",
+        "liblog",
+    ],
+}
