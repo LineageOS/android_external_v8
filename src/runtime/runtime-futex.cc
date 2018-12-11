@@ -12,82 +12,72 @@
 
 // Implement Futex API for SharedArrayBuffers as defined in the
 // SharedArrayBuffer draft spec, found here:
-// https://github.com/lars-t-hansen/ecmascript_sharedmem
+// https://github.com/tc39/ecmascript_sharedmem
 
 namespace v8 {
 namespace internal {
 
-RUNTIME_FUNCTION(Runtime_AtomicsFutexWait) {
+RUNTIME_FUNCTION(Runtime_AtomicsWait) {
   HandleScope scope(isolate);
-  DCHECK(args.length() == 4);
+  DCHECK_EQ(4, args.length());
   CONVERT_ARG_HANDLE_CHECKED(JSTypedArray, sta, 0);
   CONVERT_SIZE_ARG_CHECKED(index, 1);
   CONVERT_INT32_ARG_CHECKED(value, 2);
   CONVERT_DOUBLE_ARG_CHECKED(timeout, 3);
   CHECK(sta->GetBuffer()->is_shared());
-  CHECK_LT(index, NumberToSize(isolate, sta->length()));
+  CHECK_LT(index, NumberToSize(sta->length()));
   CHECK_EQ(sta->type(), kExternalInt32Array);
   CHECK(timeout == V8_INFINITY || !std::isnan(timeout));
 
+  if (!isolate->allow_atomics_wait()) {
+    THROW_NEW_ERROR_RETURN_FAILURE(
+        isolate, NewTypeError(MessageTemplate::kAtomicsWaitNotAllowed));
+  }
+
   Handle<JSArrayBuffer> array_buffer = sta->GetBuffer();
-  size_t addr = (index << 2) + NumberToSize(isolate, sta->byte_offset());
+  size_t addr = (index << 2) + NumberToSize(sta->byte_offset());
 
   return FutexEmulation::Wait(isolate, array_buffer, addr, value, timeout);
 }
 
-
-RUNTIME_FUNCTION(Runtime_AtomicsFutexWake) {
+RUNTIME_FUNCTION(Runtime_AtomicsWake) {
   HandleScope scope(isolate);
-  DCHECK(args.length() == 3);
+  DCHECK_EQ(3, args.length());
   CONVERT_ARG_HANDLE_CHECKED(JSTypedArray, sta, 0);
   CONVERT_SIZE_ARG_CHECKED(index, 1);
-  CONVERT_INT32_ARG_CHECKED(count, 2);
+  CONVERT_UINT32_ARG_CHECKED(count, 2);
   CHECK(sta->GetBuffer()->is_shared());
-  CHECK_LT(index, NumberToSize(isolate, sta->length()));
+  CHECK_LT(index, NumberToSize(sta->length()));
   CHECK_EQ(sta->type(), kExternalInt32Array);
 
   Handle<JSArrayBuffer> array_buffer = sta->GetBuffer();
-  size_t addr = (index << 2) + NumberToSize(isolate, sta->byte_offset());
+  size_t addr = (index << 2) + NumberToSize(sta->byte_offset());
 
   return FutexEmulation::Wake(isolate, array_buffer, addr, count);
 }
 
-
-RUNTIME_FUNCTION(Runtime_AtomicsFutexWakeOrRequeue) {
+RUNTIME_FUNCTION(Runtime_AtomicsNumWaitersForTesting) {
   HandleScope scope(isolate);
-  DCHECK(args.length() == 5);
-  CONVERT_ARG_HANDLE_CHECKED(JSTypedArray, sta, 0);
-  CONVERT_SIZE_ARG_CHECKED(index1, 1);
-  CONVERT_INT32_ARG_CHECKED(count, 2);
-  CONVERT_INT32_ARG_CHECKED(value, 3);
-  CONVERT_SIZE_ARG_CHECKED(index2, 4);
-  CHECK(sta->GetBuffer()->is_shared());
-  CHECK_LT(index1, NumberToSize(isolate, sta->length()));
-  CHECK_LT(index2, NumberToSize(isolate, sta->length()));
-  CHECK_EQ(sta->type(), kExternalInt32Array);
-
-  Handle<JSArrayBuffer> array_buffer = sta->GetBuffer();
-  size_t addr1 = (index1 << 2) + NumberToSize(isolate, sta->byte_offset());
-  size_t addr2 = (index2 << 2) + NumberToSize(isolate, sta->byte_offset());
-
-  return FutexEmulation::WakeOrRequeue(isolate, array_buffer, addr1, count,
-                                       value, addr2);
-}
-
-
-RUNTIME_FUNCTION(Runtime_AtomicsFutexNumWaitersForTesting) {
-  HandleScope scope(isolate);
-  DCHECK(args.length() == 2);
+  DCHECK_EQ(2, args.length());
   CONVERT_ARG_HANDLE_CHECKED(JSTypedArray, sta, 0);
   CONVERT_SIZE_ARG_CHECKED(index, 1);
   CHECK(sta->GetBuffer()->is_shared());
-  CHECK_LT(index, NumberToSize(isolate, sta->length()));
+  CHECK_LT(index, NumberToSize(sta->length()));
   CHECK_EQ(sta->type(), kExternalInt32Array);
 
   Handle<JSArrayBuffer> array_buffer = sta->GetBuffer();
-  size_t addr = (index << 2) + NumberToSize(isolate, sta->byte_offset());
+  size_t addr = (index << 2) + NumberToSize(sta->byte_offset());
 
   return FutexEmulation::NumWaitersForTesting(isolate, array_buffer, addr);
+}
+
+RUNTIME_FUNCTION(Runtime_SetAllowAtomicsWait) {
+  HandleScope scope(isolate);
+  DCHECK_EQ(1, args.length());
+  CONVERT_BOOLEAN_ARG_CHECKED(set, 0);
+
+  isolate->set_allow_atomics_wait(set);
+  return isolate->heap()->undefined_value();
 }
 }  // namespace internal
 }  // namespace v8
