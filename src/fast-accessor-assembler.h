@@ -6,25 +6,27 @@
 #define V8_FAST_ACCESSOR_ASSEMBLER_H_
 
 #include <stdint.h>
+#include <memory>
 #include <vector>
 
 #include "include/v8-experimental.h"
 #include "src/base/macros.h"
-#include "src/base/smart-pointers.h"
-#include "src/handles.h"
-
-// For CodeStubAssembler::Label. (We cannot forward-declare inner classes.)
-#include "src/code-stub-assembler.h"
+#include "src/zone/zone.h"
 
 namespace v8 {
 namespace internal {
 
 class Code;
+class CodeStubAssembler;
 class Isolate;
-class Zone;
+template <typename T>
+class MaybeHandle;
 
 namespace compiler {
 class Node;
+class CodeAssemblerLabel;
+class CodeAssemblerState;
+class CodeAssemblerVariable;
 }
 
 // This interface "exports" an aggregated subset of RawMachineAssembler, for
@@ -54,8 +56,20 @@ class FastAccessorAssembler {
   ValueId IntegerConstant(int int_constant);
   ValueId GetReceiver();
   ValueId LoadInternalField(ValueId value_id, int field_no);
+
+  // Loads internal field and assumes the object is indeed a valid API object
+  // with the proper internal fields present.
+  // The intended use is to call this on an object whose structure has already
+  // been checked previously, e.g. the accessor's receiver, which is map-checked
+  // before the fast accessor is called on it. Using this on an arbitrary object
+  // will result in unsafe memory accesses.
+  ValueId LoadInternalFieldUnchecked(ValueId value_id, int field_no);
+
   ValueId LoadValue(ValueId value_id, int offset);
   ValueId LoadObject(ValueId value_id, int offset);
+
+  // Converts a machine integer to a SMI.
+  ValueId ToSmi(ValueId value_id);
 
   // Builder / assembler functions for control flow.
   void ReturnValue(ValueId value_id);
@@ -63,6 +77,7 @@ class FastAccessorAssembler {
   void CheckNotZeroOrReturnNull(ValueId value_id);
   LabelId MakeLabel();
   void SetLabel(LabelId label_id);
+  void Goto(LabelId label_id);
   void CheckNotZeroOrJump(ValueId value_id, LabelId label_id);
 
   // C++ callback.
@@ -73,9 +88,11 @@ class FastAccessorAssembler {
 
  private:
   ValueId FromRaw(compiler::Node* node);
-  LabelId FromRaw(CodeStubAssembler::Label* label);
+  LabelId FromRaw(compiler::CodeAssemblerLabel* label);
   compiler::Node* FromId(ValueId value) const;
-  CodeStubAssembler::Label* FromId(LabelId value) const;
+  compiler::CodeAssemblerLabel* FromId(LabelId value) const;
+
+  void CheckIsJSObjectOrJump(ValueId value, LabelId label_id);
 
   void Clear();
   Zone* zone() { return &zone_; }
@@ -83,13 +100,14 @@ class FastAccessorAssembler {
 
   Zone zone_;
   Isolate* isolate_;
-  base::SmartPointer<CodeStubAssembler> assembler_;
+  std::unique_ptr<compiler::CodeAssemblerState> assembler_state_;
+  std::unique_ptr<CodeStubAssembler> assembler_;
 
   // To prevent exposing the RMA internals to the outside world, we'll map
   // Node + Label pointers integers wrapped in ValueId and LabelId instances.
   // These vectors maintain this mapping.
   std::vector<compiler::Node*> nodes_;
-  std::vector<CodeStubAssembler::Label*> labels_;
+  std::vector<compiler::CodeAssemblerLabel*> labels_;
 
   // Remember the current state for easy error checking. (We prefer to be
   // strict as this class will be exposed at the API.)

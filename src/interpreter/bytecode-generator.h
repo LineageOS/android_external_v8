@@ -8,6 +8,7 @@
 #include "src/ast/ast.h"
 #include "src/interpreter/bytecode-array-builder.h"
 #include "src/interpreter/bytecode-label.h"
+#include "src/interpreter/bytecode-register.h"
 #include "src/interpreter/bytecodes.h"
 
 namespace v8 {
@@ -17,21 +18,23 @@ class CompilationInfo;
 
 namespace interpreter {
 
+class GlobalDeclarationsBuilder;
 class LoopBuilder;
 
-class BytecodeGenerator final : public AstVisitor {
+class BytecodeGenerator final : public AstVisitor<BytecodeGenerator> {
  public:
   explicit BytecodeGenerator(CompilationInfo* info);
 
-  Handle<BytecodeArray> MakeBytecode();
+  void GenerateBytecode(uintptr_t stack_limit);
+  Handle<BytecodeArray> FinalizeBytecode(Isolate* isolate);
 
-#define DECLARE_VISIT(type) void Visit##type(type* node) override;
+#define DECLARE_VISIT(type) void Visit##type(type* node);
   AST_NODE_LIST(DECLARE_VISIT)
 #undef DECLARE_VISIT
 
   // Visiting function for declarations list and statements are overridden.
-  void VisitDeclarations(ZoneList<Declaration*>* declarations) override;
-  void VisitStatements(ZoneList<Statement*>* statments) override;
+  void VisitDeclarations(Declaration::List* declarations);
+  void VisitStatements(ZoneList<Statement*>* statments);
 
  private:
   class ContextScope;
@@ -41,13 +44,18 @@ class BytecodeGenerator final : public AstVisitor {
   class ControlScopeForTopLevel;
   class ControlScopeForTryCatch;
   class ControlScopeForTryFinally;
+  class CurrentScope;
   class ExpressionResultScope;
   class EffectResultScope;
-  class AccumulatorResultScope;
-  class RegisterResultScope;
+  class GlobalDeclarationsBuilder;
   class RegisterAllocationScope;
+  class TestResultScope;
+  class ValueResultScope;
 
-  void MakeBytecodeBody();
+  enum class TestFallthrough { kThen, kElse, kNone };
+
+  void GenerateBytecodeBody();
+  void AllocateDeferredConstants(Isolate* isolate);
 
   DEFINE_AST_VISITOR_SUBCLASS_MEMBERS();
 
@@ -66,8 +74,9 @@ class BytecodeGenerator final : public AstVisitor {
   // Used by flow control routines to evaluate loop condition.
   void VisitCondition(Expression* expr);
 
-  // Helper visitors which perform common operations.
-  Register VisitArguments(ZoneList<Expression*>* arguments);
+  // Visit the arguments expressions in |args| and store them in |args_regs|,
+  // growing |args_regs| for each argument visited.
+  void VisitArguments(ZoneList<Expression*>* args, RegisterList* arg_regs);
 
   // Visit a keyed super property load. The optional
   // |opt_receiver_out| register will have the receiver stored to it
@@ -84,34 +93,25 @@ class BytecodeGenerator final : public AstVisitor {
                                    Register opt_receiver_out);
 
   void VisitPropertyLoad(Register obj, Property* expr);
-  void VisitPropertyLoadForAccumulator(Register obj, Property* expr);
+  void VisitPropertyLoadForRegister(Register obj, Property* expr,
+                                    Register destination);
 
-  void VisitVariableLoad(Variable* variable, FeedbackVectorSlot slot,
+  void BuildVariableLoad(Variable* variable, FeedbackSlot slot,
+                         HoleCheckMode hole_check_mode,
                          TypeofMode typeof_mode = NOT_INSIDE_TYPEOF);
-  void VisitVariableLoadForAccumulatorValue(
-      Variable* variable, FeedbackVectorSlot slot,
+  void BuildVariableLoadForAccumulatorValue(
+      Variable* variable, FeedbackSlot slot, HoleCheckMode hole_check_mode,
       TypeofMode typeof_mode = NOT_INSIDE_TYPEOF);
-  MUST_USE_RESULT Register
-  VisitVariableLoadForRegisterValue(Variable* variable, FeedbackVectorSlot slot,
-                                    TypeofMode typeof_mode = NOT_INSIDE_TYPEOF);
-  void VisitVariableAssignment(Variable* variable, Token::Value op,
-                               FeedbackVectorSlot slot);
+  void BuildVariableAssignment(Variable* variable, Token::Value op,
+                               FeedbackSlot slot,
+                               HoleCheckMode hole_check_mode);
 
-  void BuildNamedSuperPropertyStore(Register receiver, Register home_object,
-                                    Register name, Register value);
-  void BuildKeyedSuperPropertyStore(Register receiver, Register home_object,
-                                    Register key, Register value);
-  void BuildNamedSuperPropertyLoad(Register receiver, Register home_object,
-                                   Register name);
-  void BuildKeyedSuperPropertyLoad(Register receiver, Register home_object,
-                                   Register key);
-
+  void BuildReturn();
+  void BuildAsyncReturn();
+  void BuildReThrow();
   void BuildAbort(BailoutReason bailout_reason);
-  void BuildThrowIfHole(Handle<String> name);
-  void BuildThrowIfNotHole(Handle<String> name);
-  void BuildThrowReassignConstant(Handle<String> name);
-  void BuildThrowReferenceError(Handle<String> name);
-  void BuildHoleCheckForVariableLoad(VariableMode mode, Handle<String> name);
+  void BuildThrowIfHole(const AstRawString* name);
+  void BuildThrowReferenceError(const AstRawString* name);
   void BuildHoleCheckForVariableAssignment(Variable* variable, Token::Value op);
 
   // Build jump to targets[value], where
@@ -119,31 +119,31 @@ class BytecodeGenerator final : public AstVisitor {
   void BuildIndexedJump(Register value, size_t start_index, size_t size,
                         ZoneVector<BytecodeLabel>& targets);
 
+  void BuildNewLocalActivationContext();
+  void BuildLocalActivationContextInitialization();
+  void BuildNewLocalBlockContext(Scope* scope);
+  void BuildNewLocalCatchContext(Variable* variable, Scope* scope);
+  void BuildNewLocalWithContext(Scope* scope);
+
   void VisitGeneratorPrologue();
 
   void VisitArgumentsObject(Variable* variable);
   void VisitRestArgumentsArray(Variable* rest);
   void VisitCallSuper(Call* call);
-  void VisitClassLiteralContents(ClassLiteral* expr);
-  void VisitClassLiteralForRuntimeDefinition(ClassLiteral* expr);
-  void VisitClassLiteralProperties(ClassLiteral* expr, Register literal,
+  void VisitClassLiteralProperties(ClassLiteral* expr, Register constructor,
                                    Register prototype);
-  void VisitClassLiteralStaticPrototypeWithComputedName(Register name);
+  void BuildClassLiteralNameProperty(ClassLiteral* expr, Register constructor);
   void VisitThisFunctionVariable(Variable* variable);
   void VisitNewTargetVariable(Variable* variable);
-  void VisitNewLocalFunctionContext();
-  void VisitBuildLocalActivationContext();
   void VisitBlockDeclarationsAndStatements(Block* stmt);
-  void VisitNewLocalBlockContext(Scope* scope);
-  void VisitNewLocalCatchContext(Variable* variable);
-  void VisitNewLocalWithContext();
   void VisitFunctionClosureForContext();
   void VisitSetHomeObject(Register value, Register home_object,
-                          ObjectLiteralProperty* property, int slot_number = 0);
+                          LiteralProperty* property, int slot_number = 0);
   void VisitObjectLiteralAccessor(Register home_object,
                                   ObjectLiteralProperty* property,
                                   Register value_out);
-  void VisitForInAssignment(Expression* expr, FeedbackVectorSlot slot);
+  void VisitForInAssignment(Expression* expr, FeedbackSlot slot);
+  void VisitModuleNamespaceImports();
 
   // Visit the header/body of a loop iteration.
   void VisitIterationHeader(IterationStatement* stmt,
@@ -153,31 +153,31 @@ class BytecodeGenerator final : public AstVisitor {
   // Visit a statement and switch scopes, the context is in the accumulator.
   void VisitInScope(Statement* stmt, Scope* scope);
 
+  void BuildPushUndefinedIntoRegisterList(RegisterList* reg_list);
+
   // Visitors for obtaining expression result in the accumulator, in a
   // register, or just getting the effect.
   void VisitForAccumulatorValue(Expression* expr);
   void VisitForAccumulatorValueOrTheHole(Expression* expr);
   MUST_USE_RESULT Register VisitForRegisterValue(Expression* expr);
   void VisitForRegisterValue(Expression* expr, Register destination);
+  void VisitAndPushIntoRegisterList(Expression* expr, RegisterList* reg_list);
   void VisitForEffect(Expression* expr);
+  void VisitForTest(Expression* expr, BytecodeLabels* then_labels,
+                    BytecodeLabels* else_labels, TestFallthrough fallthrough);
 
-  // Methods for tracking and remapping register.
-  void RecordStoreToRegister(Register reg);
-  Register LoadFromAliasedRegister(Register reg);
-
-  // Methods for tracking try-block nesting.
-  bool IsInsideTryCatch() const { return try_catch_nesting_level_ > 0; }
-  bool IsInsideTryFinally() const { return try_finally_nesting_level_ > 0; }
-
-  // Initialize an array of temporary registers with consecutive registers.
-  template <size_t N>
-  void InitializeWithConsecutiveRegisters(Register (&registers)[N]);
+  // Returns the runtime function id for a store to super for the function's
+  // language mode.
+  inline Runtime::FunctionId StoreToSuperRuntimeId();
+  inline Runtime::FunctionId StoreKeyedToSuperRuntimeId();
 
   inline BytecodeArrayBuilder* builder() const { return builder_; }
-  inline Isolate* isolate() const { return isolate_; }
   inline Zone* zone() const { return zone_; }
-  inline Scope* scope() const { return scope_; }
+  inline DeclarationScope* closure_scope() const { return closure_scope_; }
   inline CompilationInfo* info() const { return info_; }
+
+  inline Scope* current_scope() const { return current_scope_; }
+  inline void set_current_scope(Scope* scope) { current_scope_ = scope; }
 
   inline ControlScope* execution_control() const { return execution_control_; }
   inline void set_execution_control(ControlScope* scope) {
@@ -191,32 +191,44 @@ class BytecodeGenerator final : public AstVisitor {
     execution_result_ = execution_result;
   }
   ExpressionResultScope* execution_result() const { return execution_result_; }
-  inline void set_register_allocator(
-      RegisterAllocationScope* register_allocator) {
-    register_allocator_ = register_allocator;
-  }
-  RegisterAllocationScope* register_allocator() const {
-    return register_allocator_;
+  BytecodeRegisterAllocator* register_allocator() const {
+    return builder()->register_allocator();
   }
 
-  ZoneVector<Handle<Object>>* globals() { return &globals_; }
+  GlobalDeclarationsBuilder* globals_builder() {
+    DCHECK_NOT_NULL(globals_builder_);
+    return globals_builder_;
+  }
   inline LanguageMode language_mode() const;
-  int feedback_index(FeedbackVectorSlot slot) const;
+  int feedback_index(FeedbackSlot slot) const;
 
-  Isolate* isolate_;
+  const AstRawString* prototype_string() const { return prototype_string_; }
+  const AstRawString* undefined_string() const { return undefined_string_; }
+
   Zone* zone_;
   BytecodeArrayBuilder* builder_;
   CompilationInfo* info_;
-  Scope* scope_;
-  ZoneVector<Handle<Object>> globals_;
+  DeclarationScope* closure_scope_;
+  Scope* current_scope_;
+
+  GlobalDeclarationsBuilder* globals_builder_;
+  ZoneVector<GlobalDeclarationsBuilder*> global_declarations_;
+  ZoneVector<std::pair<FunctionLiteral*, size_t>> function_literals_;
+  ZoneVector<std::pair<NativeFunctionLiteral*, size_t>>
+      native_function_literals_;
+  ZoneVector<std::pair<ObjectLiteral*, size_t>> object_literals_;
+  ZoneVector<std::pair<ArrayLiteral*, size_t>> array_literals_;
+
   ControlScope* execution_control_;
   ContextScope* execution_context_;
   ExpressionResultScope* execution_result_;
-  RegisterAllocationScope* register_allocator_;
+
   ZoneVector<BytecodeLabel> generator_resume_points_;
   Register generator_state_;
-  int try_catch_nesting_level_;
-  int try_finally_nesting_level_;
+  int loop_depth_;
+
+  const AstRawString* prototype_string_;
+  const AstRawString* undefined_string_;
 };
 
 }  // namespace interpreter
