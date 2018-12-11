@@ -15,7 +15,7 @@
 ## limitations under the License.
 ##
 
-BASE_PATH := $(call my-dir)
+base_path := $(call my-dir)
 
 V8_SUPPORTED_ARCH := arm mips x86 arm64 mips64 x86_64
 
@@ -27,5 +27,14 @@ endif
 
 # Build libv8 and d8
 
-include $(BASE_PATH)/Android.libv8.mk
-include $(BASE_PATH)/Android.d8.mk
+include $(base_path)/Android.base.mk
+include $(base_path)/Android.libv8.mk
+include $(base_path)/Android.platform.mk
+include $(base_path)/Android.sampler.mk
+include $(base_path)/Android.v8.mk
+include $(base_path)/Android.v8gen.mk
+include $(base_path)/Android.mkpeephole.mk
+
+include $(base_path)/Android.d8.mk
+
+base_path :=
