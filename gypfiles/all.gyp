@@ -23,14 +23,23 @@
             '../test/cctest/cctest.gyp:*',
             '../test/fuzzer/fuzzer.gyp:*',
             '../test/unittests/unittests.gyp:*',
-            ],
+          ],
+        }],
+        ['v8_enable_inspector==1', {
+          'dependencies': [
+            '../test/inspector/inspector.gyp:*',
+          ],
+        }],
+        ['v8_enable_inspector==1 and test_isolation_mode != "noop"', {
+          'dependencies': [
+            '../test/debugger/debugger.gyp:*',
+          ],
         }],
         ['test_isolation_mode != "noop"', {
           'dependencies': [
             '../test/bot_default.gyp:*',
             '../test/benchmarks/benchmarks.gyp:*',
             '../test/default.gyp:*',
-            '../test/ignition.gyp:*',
             '../test/intl/intl.gyp:*',
             '../test/message/message.gyp:*',
             '../test/mjsunit/mjsunit.gyp:*',
@@ -38,7 +47,6 @@
             '../test/optimize_for_size.gyp:*',
             '../test/perf.gyp:*',
             '../test/preparser/preparser.gyp:*',
-            '../test/simdjs/simdjs.gyp:*',
             '../test/test262/test262.gyp:*',
             '../test/webkit/webkit.gyp:*',
             '../tools/check-static-initializers.gyp:*',
