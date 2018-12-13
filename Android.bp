@@ -38,6 +38,7 @@ cc_defaults {
         "-Wno-missing-field-initializers",
         "-Wno-ignored-qualifiers",
         "-Wno-undefined-var-template",
+        "-Wno-null-pointer-arithmetic",
         "-fno-exceptions",
         "-fvisibility=hidden",
         "-DENABLE_DEBUGGER_SUPPORT",
