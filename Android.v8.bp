@@ -632,9 +632,16 @@ cc_library_static {
             ],
         },
     },
+    target: {
+        android: {
+            cflags: [
+                "-DANDROID_LINK_SHARED_ICU4C",
+            ],
+        },
+    },
     local_include_dirs: ["src"],
-    include_dirs: [
-        "external/icu/icu4c/source/common",
-        "external/icu/icu4c/source/i18n",
+    header_libs: [
+        "libicuuc_headers",
+        "libicui18n_headers",
     ],
 }
