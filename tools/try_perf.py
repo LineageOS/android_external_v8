@@ -46,9 +46,9 @@ PUBLIC_BENCHMARKS = [
   'octane-pr',
   'octane-tf',
   'octane-tf-pr',
-  'simdjs',
   'sunspider',
   'sunspider-ignition',
+  'unity',
   'wasm',
 ]
 

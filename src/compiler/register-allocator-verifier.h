@@ -5,13 +5,14 @@
 #ifndef V8_REGISTER_ALLOCATOR_VERIFIER_H_
 #define V8_REGISTER_ALLOCATOR_VERIFIER_H_
 
-#include "src/zone-containers.h"
+#include "src/compiler/instruction.h"
+#include "src/zone/zone-containers.h"
 
 namespace v8 {
 namespace internal {
 namespace compiler {
 
-class InstructionOperand;
+class InstructionBlock;
 class InstructionSequence;
 
 // The register allocator validator traverses instructions in the instruction
@@ -178,7 +179,6 @@ class RegisterAllocatorVerifier final : public ZoneObject {
     kFPRegister,
     kFixedFPRegister,
     kSlot,
-    kFPSlot,
     kFixedSlot,
     kNone,
     kNoneFP,
@@ -189,7 +189,9 @@ class RegisterAllocatorVerifier final : public ZoneObject {
 
   struct OperandConstraint {
     ConstraintType type_;
-    int value_;  // subkind index when relevant
+    // Constant or immediate value, register code, slot index, or slot size
+    // when relevant.
+    int value_;
     int spilled_slot_;
     int virtual_register_;
   };

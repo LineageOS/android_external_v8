@@ -9,6 +9,9 @@
 #include "src/arguments.h"
 #include "src/frames-inl.h"
 #include "src/interpreter/bytecode-array-iterator.h"
+#include "src/interpreter/bytecode-decoder.h"
+#include "src/interpreter/bytecode-flags.h"
+#include "src/interpreter/bytecode-register.h"
 #include "src/interpreter/bytecodes.h"
 #include "src/isolate-inl.h"
 #include "src/ostreams.h"
@@ -18,12 +21,17 @@ namespace internal {
 
 RUNTIME_FUNCTION(Runtime_InterpreterNewClosure) {
   HandleScope scope(isolate);
-  DCHECK_EQ(2, args.length());
+  DCHECK_EQ(4, args.length());
   CONVERT_ARG_HANDLE_CHECKED(SharedFunctionInfo, shared, 0);
-  CONVERT_SMI_ARG_CHECKED(pretenured_flag, 1);
+  CONVERT_ARG_HANDLE_CHECKED(FeedbackVector, vector, 1);
+  CONVERT_SMI_ARG_CHECKED(index, 2);
+  CONVERT_SMI_ARG_CHECKED(pretenured_flag, 3);
   Handle<Context> context(isolate->context(), isolate);
+  FeedbackSlot slot = FeedbackVector::ToSlot(index);
+  Handle<Cell> vector_cell(Cell::cast(vector->Get(slot)), isolate);
   return *isolate->factory()->NewFunctionFromSharedFunctionInfo(
-      shared, context, static_cast<PretenureFlag>(pretenured_flag));
+      shared, context, vector_cell,
+      static_cast<PretenureFlag>(pretenured_flag));
 }
 
 namespace {
@@ -117,8 +125,8 @@ RUNTIME_FUNCTION(Runtime_InterpreterTraceBytecodeEntry) {
     const uint8_t* bytecode_address = base_address + offset;
     os << " -> " << static_cast<const void*>(bytecode_address) << " @ "
        << std::setw(4) << offset << " : ";
-    interpreter::Bytecodes::Decode(os, bytecode_address,
-                                   bytecode_array->parameter_count());
+    interpreter::BytecodeDecoder::Decode(os, bytecode_address,
+                                         bytecode_array->parameter_count());
     os << std::endl;
     // Print all input registers and accumulator.
     PrintRegisters(os, true, bytecode_iterator, accumulator);
@@ -152,20 +160,18 @@ RUNTIME_FUNCTION(Runtime_InterpreterTraceBytecodeExit) {
   return isolate->heap()->undefined_value();
 }
 
-RUNTIME_FUNCTION(Runtime_InterpreterClearPendingMessage) {
+RUNTIME_FUNCTION(Runtime_InterpreterAdvanceBytecodeOffset) {
   SealHandleScope shs(isolate);
-  DCHECK_EQ(0, args.length());
-  Object* message = isolate->thread_local_top()->pending_message_obj_;
-  isolate->clear_pending_message();
-  return message;
-}
-
-RUNTIME_FUNCTION(Runtime_InterpreterSetPendingMessage) {
-  SealHandleScope shs(isolate);
-  DCHECK_EQ(1, args.length());
-  CONVERT_ARG_HANDLE_CHECKED(Object, message, 0);
-  isolate->thread_local_top()->pending_message_obj_ = *message;
-  return isolate->heap()->undefined_value();
+  DCHECK_EQ(2, args.length());
+  CONVERT_ARG_HANDLE_CHECKED(BytecodeArray, bytecode_array, 0);
+  CONVERT_SMI_ARG_CHECKED(bytecode_offset, 1);
+  interpreter::BytecodeArrayIterator it(bytecode_array);
+  int offset = bytecode_offset - BytecodeArray::kHeaderSize + kHeapObjectTag;
+  while (it.current_offset() < offset) it.Advance();
+  DCHECK_EQ(offset, it.current_offset());
+  it.Advance();  // Advance by one bytecode.
+  offset = it.current_offset() + BytecodeArray::kHeaderSize - kHeapObjectTag;
+  return Smi::FromInt(offset);
 }
 
 }  // namespace internal

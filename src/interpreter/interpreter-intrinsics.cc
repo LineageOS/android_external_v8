@@ -5,6 +5,7 @@
 #include "src/interpreter/interpreter-intrinsics.h"
 
 #include "src/code-factory.h"
+#include "src/objects-inl.h"
 
 namespace v8 {
 namespace internal {
@@ -103,14 +104,10 @@ Node* IntrinsicsHelper::InvokeIntrinsic(Node* function_id, Node* context,
   return result.value();
 }
 
-Node* IntrinsicsHelper::CompareInstanceType(Node* map, int type,
+Node* IntrinsicsHelper::CompareInstanceType(Node* object, int type,
                                             InstanceTypeCompareMode mode) {
-  InterpreterAssembler::Variable return_value(assembler_,
-                                              MachineRepresentation::kTagged);
-  Node* instance_type = __ LoadInstanceType(map);
+  Node* instance_type = __ LoadInstanceType(object);
 
-  InterpreterAssembler::Label if_true(assembler_), if_false(assembler_),
-      end(assembler_);
   if (mode == kInstanceTypeEqual) {
     return __ Word32Equal(instance_type, __ Int32Constant(type));
   } else {
@@ -122,10 +119,11 @@ Node* IntrinsicsHelper::CompareInstanceType(Node* map, int type,
 Node* IntrinsicsHelper::IsInstanceType(Node* input, int type) {
   InterpreterAssembler::Variable return_value(assembler_,
                                               MachineRepresentation::kTagged);
+  // TODO(ishell): Use Select here.
   InterpreterAssembler::Label if_not_smi(assembler_), return_true(assembler_),
       return_false(assembler_), end(assembler_);
   Node* arg = __ LoadRegister(input);
-  __ GotoIf(__ WordIsSmi(arg), &return_false);
+  __ GotoIf(__ TaggedIsSmi(arg), &return_false);
 
   Node* condition = CompareInstanceType(arg, type, kInstanceTypeEqual);
   __ Branch(condition, &return_true, &return_false);
@@ -148,13 +146,15 @@ Node* IntrinsicsHelper::IsInstanceType(Node* input, int type) {
 
 Node* IntrinsicsHelper::IsJSReceiver(Node* input, Node* arg_count,
                                      Node* context) {
+  // TODO(ishell): Use Select here.
+  // TODO(ishell): Use CSA::IsJSReceiverInstanceType here.
   InterpreterAssembler::Variable return_value(assembler_,
                                               MachineRepresentation::kTagged);
   InterpreterAssembler::Label return_true(assembler_), return_false(assembler_),
       end(assembler_);
 
   Node* arg = __ LoadRegister(input);
-  __ GotoIf(__ WordIsSmi(arg), &return_false);
+  __ GotoIf(__ TaggedIsSmi(arg), &return_false);
 
   STATIC_ASSERT(LAST_TYPE == LAST_JS_RECEIVER_TYPE);
   Node* condition = CompareInstanceType(arg, FIRST_JS_RECEIVER_TYPE,
@@ -185,16 +185,13 @@ Node* IntrinsicsHelper::IsJSProxy(Node* input, Node* arg_count, Node* context) {
   return IsInstanceType(input, JS_PROXY_TYPE);
 }
 
-Node* IntrinsicsHelper::IsRegExp(Node* input, Node* arg_count, Node* context) {
-  return IsInstanceType(input, JS_REGEXP_TYPE);
-}
-
 Node* IntrinsicsHelper::IsTypedArray(Node* input, Node* arg_count,
                                      Node* context) {
   return IsInstanceType(input, JS_TYPED_ARRAY_TYPE);
 }
 
 Node* IntrinsicsHelper::IsSmi(Node* input, Node* arg_count, Node* context) {
+  // TODO(ishell): Use SelectBooleanConstant here.
   InterpreterAssembler::Variable return_value(assembler_,
                                               MachineRepresentation::kTagged);
   InterpreterAssembler::Label if_smi(assembler_), if_not_smi(assembler_),
@@ -202,7 +199,7 @@ Node* IntrinsicsHelper::IsSmi(Node* input, Node* arg_count, Node* context) {
 
   Node* arg = __ LoadRegister(input);
 
-  __ Branch(__ WordIsSmi(arg), &if_smi, &if_not_smi);
+  __ Branch(__ TaggedIsSmi(arg), &if_smi, &if_not_smi);
   __ Bind(&if_smi);
   {
     return_value.Bind(__ BooleanConstant(true));
@@ -222,14 +219,22 @@ Node* IntrinsicsHelper::IsSmi(Node* input, Node* arg_count, Node* context) {
 Node* IntrinsicsHelper::IntrinsicAsStubCall(Node* args_reg, Node* context,
                                             Callable const& callable) {
   int param_count = callable.descriptor().GetParameterCount();
-  Node** args = zone()->NewArray<Node*>(param_count + 1);  // 1 for context
+  int input_count = param_count + 2;  // +2 for target and context
+  Node** args = zone()->NewArray<Node*>(input_count);
+  int index = 0;
+  args[index++] = __ HeapConstant(callable.code());
   for (int i = 0; i < param_count; i++) {
-    args[i] = __ LoadRegister(args_reg);
+    args[index++] = __ LoadRegister(args_reg);
     args_reg = __ NextRegister(args_reg);
   }
-  args[param_count] = context;
+  args[index++] = context;
+  return __ CallStubN(callable.descriptor(), 1, input_count, args);
+}
 
-  return __ CallStubN(callable, args);
+Node* IntrinsicsHelper::CreateIterResultObject(Node* input, Node* arg_count,
+                                               Node* context) {
+  return IntrinsicAsStubCall(input, context,
+                             CodeFactory::CreateIterResultObject(isolate()));
 }
 
 Node* IntrinsicsHelper::HasProperty(Node* input, Node* arg_count,
@@ -238,43 +243,12 @@ Node* IntrinsicsHelper::HasProperty(Node* input, Node* arg_count,
                              CodeFactory::HasProperty(isolate()));
 }
 
-Node* IntrinsicsHelper::MathPow(Node* input, Node* arg_count, Node* context) {
-  return IntrinsicAsStubCall(input, context, CodeFactory::MathPow(isolate()));
-}
-
-Node* IntrinsicsHelper::NewObject(Node* input, Node* arg_count, Node* context) {
-  return IntrinsicAsStubCall(input, context,
-                             CodeFactory::FastNewObject(isolate()));
-}
-
-Node* IntrinsicsHelper::NumberToString(Node* input, Node* arg_count,
-                                       Node* context) {
-  return IntrinsicAsStubCall(input, context,
-                             CodeFactory::NumberToString(isolate()));
-}
-
-Node* IntrinsicsHelper::RegExpConstructResult(Node* input, Node* arg_count,
-                                              Node* context) {
-  return IntrinsicAsStubCall(input, context,
-                             CodeFactory::RegExpConstructResult(isolate()));
-}
-
-Node* IntrinsicsHelper::RegExpExec(Node* input, Node* arg_count,
-                                   Node* context) {
-  return IntrinsicAsStubCall(input, context,
-                             CodeFactory::RegExpExec(isolate()));
-}
-
 Node* IntrinsicsHelper::SubString(Node* input, Node* arg_count, Node* context) {
   return IntrinsicAsStubCall(input, context, CodeFactory::SubString(isolate()));
 }
 
 Node* IntrinsicsHelper::ToString(Node* input, Node* arg_count, Node* context) {
   return IntrinsicAsStubCall(input, context, CodeFactory::ToString(isolate()));
-}
-
-Node* IntrinsicsHelper::ToName(Node* input, Node* arg_count, Node* context) {
-  return IntrinsicAsStubCall(input, context, CodeFactory::ToName(isolate()));
 }
 
 Node* IntrinsicsHelper::ToLength(Node* input, Node* arg_count, Node* context) {
@@ -308,7 +282,7 @@ Node* IntrinsicsHelper::Call(Node* args_reg, Node* arg_count, Node* context) {
   if (FLAG_debug_code) {
     InterpreterAssembler::Label arg_count_positive(assembler_);
     Node* comparison = __ Int32LessThan(target_args_count, __ Int32Constant(0));
-    __ GotoUnless(comparison, &arg_count_positive);
+    __ GotoIfNot(comparison, &arg_count_positive);
     __ Abort(kWrongArgumentCountForInvokeIntrinsic);
     __ Goto(&arg_count_positive);
     __ Bind(&arg_count_positive);
@@ -319,26 +293,45 @@ Node* IntrinsicsHelper::Call(Node* args_reg, Node* arg_count, Node* context) {
   return result;
 }
 
-Node* IntrinsicsHelper::ValueOf(Node* args_reg, Node* arg_count,
+Node* IntrinsicsHelper::ClassOf(Node* args_reg, Node* arg_count,
                                 Node* context) {
+  Node* value = __ LoadRegister(args_reg);
+  return __ ClassOf(value);
+}
+
+Node* IntrinsicsHelper::CreateAsyncFromSyncIterator(Node* args_reg,
+                                                    Node* arg_count,
+                                                    Node* context) {
+  InterpreterAssembler::Label not_receiver(
+      assembler_, InterpreterAssembler::Label::kDeferred);
+  InterpreterAssembler::Label done(assembler_);
   InterpreterAssembler::Variable return_value(assembler_,
                                               MachineRepresentation::kTagged);
-  InterpreterAssembler::Label done(assembler_);
 
-  Node* object = __ LoadRegister(args_reg);
-  return_value.Bind(object);
+  Node* sync_iterator = __ LoadRegister(args_reg);
 
-  // If the object is a smi return the object.
-  __ GotoIf(__ WordIsSmi(object), &done);
+  __ GotoIf(__ TaggedIsSmi(sync_iterator), &not_receiver);
+  __ GotoIfNot(__ IsJSReceiver(sync_iterator), &not_receiver);
 
-  // If the object is not a value type, return the object.
-  Node* condition =
-      CompareInstanceType(object, JS_VALUE_TYPE, kInstanceTypeEqual);
-  __ GotoUnless(condition, &done);
+  Node* const native_context = __ LoadNativeContext(context);
+  Node* const map = __ LoadContextElement(
+      native_context, Context::ASYNC_FROM_SYNC_ITERATOR_MAP_INDEX);
+  Node* const iterator = __ AllocateJSObjectFromMap(map);
 
-  // If the object is a value type, return the value field.
-  return_value.Bind(__ LoadObjectField(object, JSValue::kValueOffset));
+  __ StoreObjectFieldNoWriteBarrier(
+      iterator, JSAsyncFromSyncIterator::kSyncIteratorOffset, sync_iterator);
+
+  return_value.Bind(iterator);
   __ Goto(&done);
+
+  __ Bind(&not_receiver);
+  {
+    return_value.Bind(
+        __ CallRuntime(Runtime::kThrowSymbolIteratorInvalid, context));
+
+    // Unreachable due to the Throw in runtime call.
+    __ Goto(&done);
+  }
 
   __ Bind(&done);
   return return_value.value();
