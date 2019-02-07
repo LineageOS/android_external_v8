@@ -4,7 +4,9 @@ cc_library_static {
     name: "libv8platform",
     defaults: ["v8_defaults"],
     srcs: [
+        "src/libplatform/default-foreground-task-runner.cc",
         "src/libplatform/default-platform.cc",
+        "src/libplatform/default-worker-threads-task-runner.cc",
         "src/libplatform/task-queue.cc",
         "src/libplatform/tracing/trace-buffer.cc",
         "src/libplatform/tracing/trace-config.cc",
