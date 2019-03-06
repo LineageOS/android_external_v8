@@ -231,7 +231,8 @@ bool AccessInfoFactory::ComputeElementAccessInfos(
   MapTransitionList transitions(maps.length());
   for (Handle<Map> map : maps) {
     if (Map::TryUpdate(map).ToHandle(&map)) {
-      Map* transition_target =
+      Map* transition_target = map->is_stable() ?
+          nullptr :
           map->FindElementsKindTransitionedMap(&possible_transition_targets);
       if (transition_target == nullptr) {
         receiver_maps.Add(map);
