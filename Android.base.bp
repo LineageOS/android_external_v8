@@ -14,8 +14,10 @@ cc_library_static {
         "src/base/ieee754.cc",
         "src/base/logging.cc",
         "src/base/once.cc",
+        "src/base/page-allocator.cc",
         "src/base/platform/condition-variable.cc",
         "src/base/platform/mutex.cc",
+        "src/base/platform/platform-posix-time.cc",
         "src/base/platform/platform-posix.cc",
         "src/base/platform/semaphore.cc",
         "src/base/platform/time.cc",
@@ -32,6 +34,7 @@ cc_library_static {
         },
         host: {
             srcs: ["src/base/debug/stack_trace_posix.cc"],
+            cflags: ["-UANDROID"],
         },
         darwin: {
             srcs: ["src/base/platform/platform-macos.cc"],

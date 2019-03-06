@@ -19,7 +19,6 @@ build = [
     "Android.sampler.bp",
     "Android.v8.bp",
     "Android.v8gen.bp",
-    "Android.mkpeephole.bp",
 ]
 
 cc_defaults {
@@ -32,6 +31,7 @@ cc_defaults {
         "-Wno-implicit-fallthrough",
         "-Wno-import",
         "-Wno-format",
+        "-Wno-unused-variable",
         "-Wno-unused-parameter",
         "-Wno-unused-private-field",
         "-Wno-sign-compare",
@@ -39,13 +39,17 @@ cc_defaults {
         "-Wno-ignored-qualifiers",
         "-Wno-undefined-var-template",
         "-Wno-null-pointer-arithmetic",
+        "-Wno-non-virtual-dtor",
+        "-Wno-user-defined-warnings",
+        "-Wno-unused-lambda-capture",
         "-fno-exceptions",
         "-fvisibility=hidden",
         "-DENABLE_DEBUGGER_SUPPORT",
         "-DENABLE_LOGGING_AND_PROFILING",
         "-DENABLE_VMSTATE_TRACKING",
         "-DV8_NATIVE_REGEXP",
-        "-DV8_I18N_SUPPORT",
+        "-DV8_INTL_SUPPORT",
+        "-DV8_CONCURRENT_MARKING",
         "-std=gnu++0x",
         "-Os",
     ],
@@ -82,30 +86,98 @@ cc_defaults {
     },
 }
 
-genrule {
-    name: "v8_peephole_file",
-    tools: ["v8mkpeephole"],
-    cmd: "$(location v8mkpeephole) $(out)",
-    out: ["bytecode-peephole-table.cc"],
-}
-
-cc_library_static {
-    name: "v8peephole",
-    defaults: ["v8_defaults"],
-    generated_sources: ["v8_peephole_file"],
-}
-
 cc_library_static {
     name: "libv8gen",
     defaults: ["v8_defaults"],
     srcs: ["src/snapshot/snapshot-empty.cc"],
     generated_sources: [
         "v8gen_libraries",
-        "v8gen_experimental_libraries",
         "v8gen_extra_libraries",
         "v8gen_experimental_extra_libraries",
     ],
+    cflags: ["-DANDROID_LINK_SHARED_ICU4C"],
+    header_libs: [
+        "libicuuc_headers",
+        "libicui18n_headers",
+    ],
+    generated_headers: ["v8_torque_file"],
 }
+
+cc_binary_host {
+    name: "v8_torque",
+    defaults: ["v8_defaults"],
+    srcs: [
+        "src/torque/declarable.cc",
+        "src/torque/declaration-visitor.cc",
+        "src/torque/declarations.cc",
+        "src/torque/earley-parser.cc",
+        "src/torque/file-visitor.cc",
+        "src/torque/implementation-visitor.cc",
+        "src/torque/scope.cc",
+        "src/torque/source-positions.cc",
+        "src/torque/torque-parser.cc",
+        "src/torque/type-oracle.cc",
+        "src/torque/types.cc",
+        "src/torque/utils.cc",
+
+        "src/torque/torque.cc",
+    ],
+    static_libs: [
+        "libv8base",
+    ],
+}
+
+genrule {
+    name: "v8_torque_file",
+    tools: ["v8_torque"],
+    srcs: [
+          "src/builtins/base.tq",
+          "src/builtins/array.tq",
+          "src/builtins/array-copywithin.tq",
+          "src/builtins/array-foreach.tq",
+          "src/builtins/array-reverse.tq",
+          "src/builtins/typed-array.tq",
+          "src/builtins/data-view.tq",
+          "third_party/v8/builtins/array-sort.tq",
+    ],
+    cmd: "mkdir -p $(genDir)/torque-generated/ && $(location v8_torque) -o $(genDir)/torque-generated/ $(in) && $(location v8_torque) -o $(genDir)/ $(in)",
+    out: [
+        "torque-generated/builtin-definitions-from-dsl.h",
+        "torque-generated/builtins-base-from-dsl-gen.h",
+        "torque-generated/builtins-array-from-dsl-gen.h",
+        "torque-generated/builtins-typed-array-from-dsl-gen.h",
+        "torque-generated/builtins-data-view-from-dsl-gen.h",
+        "builtin-definitions-from-dsl.h",
+        "builtins-base-from-dsl-gen.h",
+        "builtins-array-from-dsl-gen.h",
+        "builtins-typed-array-from-dsl-gen.h",
+        "builtins-data-view-from-dsl-gen.h",
+    ],
+}
+
+genrule {
+    name: "v8_torque_file_cc",
+    tools: ["v8_torque"],
+    srcs: [
+          "src/builtins/base.tq",
+          "src/builtins/array.tq",
+          "src/builtins/array-copywithin.tq",
+          "src/builtins/array-foreach.tq",
+          "src/builtins/array-reverse.tq",
+          "src/builtins/typed-array.tq",
+          "src/builtins/data-view.tq",
+          //"test/torque/test-torque.tq",
+          "third_party/v8/builtins/array-sort.tq",
+    ],
+    cmd: "mkdir -p $(genDir)/torque-generated/ && $(location v8_torque) -o $(genDir)/ $(in)",
+    out: [
+        "builtins-base-from-dsl-gen.cc",
+        "builtins-array-from-dsl-gen.cc",
+        "builtins-typed-array-from-dsl-gen.cc",
+        "builtins-data-view-from-dsl-gen.cc",
+    ],
+}
+
 
 python_binary_host {
     name: "v8_js2c",
@@ -134,14 +206,6 @@ genrule {
 }
 
 genrule {
-    name: "v8gen_experimental_libraries",
-    tools: ["v8_js2c"],
-    cmd: "$(location v8_js2c) $(out) EXPERIMENTAL $(in)",
-    srcs: [":v8_js_experimental_lib_files"],
-    out: ["experimental-libraries.cc"],
-}
-
-genrule {
     name: "v8gen_extra_libraries",
     tools: ["v8_js2c"],
     cmd: "$(location v8_js2c) $(out) EXTRAS",
@@ -164,12 +228,13 @@ cc_library_static {
         "libv8sampler",
         "libv8src",
         "libv8gen",
-        "v8peephole",
     ],
     export_include_dirs: ["include"],
 }
 
 // The bare 'd8' name conflicts with d8 from prebuilts/r8
+// NOT WORKING YET
+/*
 cc_binary {
     name: "v8_d8",
     defaults: ["v8_defaults"],
@@ -177,8 +242,12 @@ cc_binary {
     srcs: [
         "src/d8.cc",
         "src/d8-posix.cc",
+        "src/async-hooks-wrapper.cc",
+        "src/d8-console.cc",
+        //"src/inspector/v8-inspector-impl.cc",
     ],
     generated_sources: ["v8_d8_gen"],
+    generated_headers: ["v8_torque_file"],
 
     static_libs: ["libv8"],
     shared_libs: [
@@ -186,8 +255,7 @@ cc_binary {
         "libicuuc",
         "libicui18n",
     ],
-
-    cflags: ["-O0"],
+    cflags: ["-O0", "-DANDROID_LINK_SHARED_ICU4C"],
     local_include_dirs: ["include"],
 
     arch: {
@@ -208,3 +276,4 @@ genrule {
     ],
     out: ["d8-js.cc"],
 }
+*/

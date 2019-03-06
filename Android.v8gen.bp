@@ -6,32 +6,8 @@ filegroup {
         "src/js/macros.py",
         "src/messages.h",
         "src/js/prologue.js",
-        "src/js/runtime.js",
-        "src/js/v8natives.js",
         "src/js/array.js",
-        "src/js/string.js",
-        "src/js/arraybuffer.js",
         "src/js/typedarray.js",
-        "src/js/collection.js",
-        "src/js/weak-collection.js",
-        "src/js/collection-iterator.js",
-        "src/js/promise.js",
-        "src/js/messages.js",
-        "src/js/templates.js",
-        "src/js/spread.js",
-        "src/js/proxy.js",
-        "src/js/harmony-string-padding.js",
-        "src/debug/mirrors.js",
-        "src/debug/debug.js",
-        "src/debug/liveedit.js",
-    ],
-}
-
-filegroup {
-    name: "v8_js_experimental_lib_files",
-    srcs: [
-        "src/js/macros.py",
-        "src/messages.h",
-        "src/js/harmony-atomics.js",
+        "src/js/intl.js",
     ],
 }
