@@ -2649,6 +2649,9 @@ class JSObject: public JSReceiver {
   static const int kHeaderSize = kElementsOffset + kPointerSize;
 
   STATIC_ASSERT(kHeaderSize == Internals::kJSObjectHeaderSize);
+  static const int kMaxInObjectProperties =
+      (kMaxInstanceSize - kHeaderSize) >> kPointerSizeLog2;
+  STATIC_ASSERT(kMaxInObjectProperties <= kMaxNumberOfDescriptors);
 
   typedef FlexibleBodyDescriptor<JSReceiver::kPropertiesOffset> BodyDescriptor;
 
