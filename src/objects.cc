@@ -12670,6 +12670,53 @@ void JSFunction::EnsureHasInitialMap(Handle<JSFunction> function) {
   map->StartInobjectSlackTracking();
 }
 
+namespace {
+bool FastInitializeDerivedMap(Isolate* isolate, Handle<JSFunction> new_target,
+                              Handle<JSFunction> constructor,
+                              Handle<Map> constructor_initial_map) {
+  // Check that |function|'s initial map still in sync with the |constructor|,
+  // otherwise we must create a new initial map for |function|.
+  if (new_target->has_initial_map() &&
+      new_target->initial_map()->GetConstructor() == *constructor) {
+    DCHECK(new_target->instance_prototype()->IsJSReceiver());
+    return true;
+  }
+  // Create a new map with the size and number of in-object properties
+  // suggested by |function|.
+
+  // Link initial map and constructor function if the new.target is actually a
+  // subclass constructor.
+  if (!IsDerivedConstructor(new_target->shared()->kind())) return false;
+
+  Handle<Object> prototype(new_target->instance_prototype(), isolate);
+  InstanceType instance_type = constructor_initial_map->instance_type();
+  DCHECK(CanSubclassHaveInobjectProperties(instance_type));
+
+  int internal_fields =
+      JSObject::GetInternalFieldCount(*constructor_initial_map);
+  int pre_allocated = constructor_initial_map->GetInObjectProperties() -
+                      constructor_initial_map->unused_property_fields();
+  int instance_size;
+  int in_object_properties;
+  new_target->CalculateInstanceSizeForDerivedClass(
+      instance_type, internal_fields, &instance_size,
+      &in_object_properties);
+
+  int unused_property_fields = in_object_properties - pre_allocated;
+  Handle<Map> map =
+      Map::CopyInitialMap(constructor_initial_map, instance_size,
+                          in_object_properties, unused_property_fields);
+  map->set_new_target_is_base(false);
+
+  JSFunction::SetInitialMap(new_target, map, prototype);
+  map->SetConstructor(*constructor);
+  map->set_construction_counter(Map::kNoSlackTracking);
+  map->StartInobjectSlackTracking();
+
+  return true;
+}
+
+}  // namespace
 
 // static
 MaybeHandle<Map> JSFunction::GetDerivedMap(Isolate* isolate,
@@ -12688,41 +12735,9 @@ MaybeHandle<Map> JSFunction::GetDerivedMap(Isolate* isolate,
 
     // Check that |function|'s initial map still in sync with the |constructor|,
     // otherwise we must create a new initial map for |function|.
-    if (function->has_initial_map() &&
-        function->initial_map()->GetConstructor() == *constructor) {
+    if (FastInitializeDerivedMap(isolate, function, constructor,
+                                 constructor_initial_map)) {
       return handle(function->initial_map(), isolate);
-    }
-
-    // Create a new map with the size and number of in-object properties
-    // suggested by |function|.
-
-    // Link initial map and constructor function if the new.target is actually a
-    // subclass constructor.
-    if (IsDerivedConstructor(function->shared()->kind())) {
-      Handle<Object> prototype(function->instance_prototype(), isolate);
-      InstanceType instance_type = constructor_initial_map->instance_type();
-      DCHECK(CanSubclassHaveInobjectProperties(instance_type));
-      int internal_fields =
-          JSObject::GetInternalFieldCount(*constructor_initial_map);
-      int pre_allocated = constructor_initial_map->GetInObjectProperties() -
-                          constructor_initial_map->unused_property_fields();
-      int instance_size;
-      int in_object_properties;
-      function->CalculateInstanceSizeForDerivedClass(
-          instance_type, internal_fields, &instance_size,
-          &in_object_properties);
-
-      int unused_property_fields = in_object_properties - pre_allocated;
-      Handle<Map> map =
-          Map::CopyInitialMap(constructor_initial_map, instance_size,
-                              in_object_properties, unused_property_fields);
-      map->set_new_target_is_base(false);
-
-      JSFunction::SetInitialMap(function, map, prototype);
-      map->SetConstructor(*constructor);
-      map->set_construction_counter(Map::kNoSlackTracking);
-      map->StartInobjectSlackTracking();
-      return map;
     }
   }
 
@@ -13371,15 +13386,17 @@ void JSFunction::CalculateInstanceSizeHelper(InstanceType instance_type,
                                              int* instance_size,
                                              int* in_object_properties) {
   int header_size = JSObject::GetHeaderSize(instance_type);
-  DCHECK_LE(requested_internal_fields,
-            (JSObject::kMaxInstanceSize - header_size) >> kPointerSizeLog2);
+  int max_nof_fields =
+      (JSObject::kMaxInstanceSize - header_size) >> kPointerSizeLog2;
+  CHECK_LE(max_nof_fields, JSObject::kMaxInObjectProperties);
+  *in_object_properties = Min(requested_in_object_properties, max_nof_fields);
+  CHECK_LE(requested_internal_fields, max_nof_fields - *in_object_properties);
   *instance_size =
-      Min(header_size +
-              ((requested_internal_fields + requested_in_object_properties)
-               << kPointerSizeLog2),
-          JSObject::kMaxInstanceSize);
-  *in_object_properties = ((*instance_size - header_size) >> kPointerSizeLog2) -
-                          requested_internal_fields;
+      header_size +
+      ((requested_internal_fields + *in_object_properties) << kPointerSizeLog2);
+  CHECK_EQ(*in_object_properties,
+           ((*instance_size - header_size) >> kPointerSizeLog2) -
+               requested_internal_fields);
 }
 
 
@@ -13404,7 +13421,13 @@ void JSFunction::CalculateInstanceSizeForDerivedClass(
     if (!current->IsJSFunction()) break;
     JSFunction* func = JSFunction::cast(current);
     SharedFunctionInfo* shared = func->shared();
-    expected_nof_properties += shared->expected_nof_properties();
+    int count = shared->expected_nof_properties();
+    // Check that the estimate is sane.
+    if (expected_nof_properties <= JSObject::kMaxInObjectProperties - count) {
+      expected_nof_properties += count;
+    } else {
+      expected_nof_properties = JSObject::kMaxInObjectProperties;
+    }
     if (!IsDerivedConstructor(shared->kind())) {
       break;
     }
