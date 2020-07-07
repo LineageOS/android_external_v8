@@ -1080,7 +1080,7 @@ static Object* SearchRegExpMultiple(Isolate* isolate, Handle<String> subject,
 
 MUST_USE_RESULT MaybeHandle<String> StringReplaceNonGlobalRegExpWithFunction(
     Isolate* isolate, Handle<String> subject, Handle<JSRegExp> regexp,
-    Handle<Object> replace_obj) {
+    Handle<String> replace_obj) {
   Factory* factory = isolate->factory();
   Handle<RegExpMatchInfo> last_match_info = isolate->regexp_last_match_info();
 
@@ -1169,7 +1169,7 @@ MUST_USE_RESULT MaybeHandle<String> StringReplaceNonGlobalRegExpWithFunction(
 MUST_USE_RESULT MaybeHandle<String> RegExpReplace(Isolate* isolate,
                                                   Handle<JSRegExp> regexp,
                                                   Handle<String> string,
-                                                  Handle<Object> replace_obj) {
+                                                  Handle<String> replace_obj) {
   Factory* factory = isolate->factory();
 
   const int flags = regexp->GetFlags();
@@ -1179,10 +1179,7 @@ MUST_USE_RESULT MaybeHandle<String> RegExpReplace(Isolate* isolate,
   // Functional fast-paths are dispatched directly by replace builtin.
   DCHECK(!replace_obj->IsCallable());
 
-  Handle<String> replace;
-  ASSIGN_RETURN_ON_EXCEPTION(isolate, replace,
-                             Object::ToString(isolate, replace_obj), String);
-  replace = String::Flatten(replace);
+  replace_obj = String::Flatten(replace_obj);
 
   Handle<RegExpMatchInfo> last_match_info = isolate->regexp_last_match_info();
 
@@ -1220,11 +1217,11 @@ MUST_USE_RESULT MaybeHandle<String> RegExpReplace(Isolate* isolate,
     IncrementalStringBuilder builder(isolate);
     builder.AppendString(factory->NewSubString(string, 0, start_index));
 
-    if (replace->length() > 0) {
+    if (replace_obj->length() > 0) {
       MatchInfoBackedMatch m(isolate, string, match_indices);
       Handle<String> replacement;
       ASSIGN_RETURN_ON_EXCEPTION(isolate, replacement,
-                                 String::GetSubstitution(isolate, &m, replace),
+                                 String::GetSubstitution(isolate, &m, replace_obj),
                                  String);
       builder.AppendString(replacement);
     }
@@ -1238,7 +1235,7 @@ MUST_USE_RESULT MaybeHandle<String> RegExpReplace(Isolate* isolate,
     RETURN_ON_EXCEPTION(isolate, RegExpUtils::SetLastIndex(isolate, regexp, 0),
                         String);
 
-    if (replace->length() == 0) {
+    if (replace_obj->length() == 0) {
       if (string->HasOnlyOneByteChars()) {
         Object* result =
             StringReplaceGlobalRegExpWithEmptyString<SeqOneByteString>(
@@ -1253,7 +1250,7 @@ MUST_USE_RESULT MaybeHandle<String> RegExpReplace(Isolate* isolate,
     }
 
     Object* result = StringReplaceGlobalRegExpWithString(
-        isolate, string, regexp, replace, last_match_info);
+        isolate, string, regexp, replace_obj, last_match_info);
     if (result->IsString()) {
       return handle(String::cast(result), isolate);
     } else {
@@ -1276,18 +1273,23 @@ RUNTIME_FUNCTION(Runtime_RegExpExecMultiple) {
   CONVERT_ARG_HANDLE_CHECKED(String, subject, 1);
   CONVERT_ARG_HANDLE_CHECKED(RegExpMatchInfo, last_match_info, 2);
   CONVERT_ARG_HANDLE_CHECKED(JSArray, result_array, 3);
+
+  DCHECK(RegExpUtils::IsUnmodifiedRegExp(isolate, regexp));
   CHECK(result_array->HasFastObjectElements());
 
   subject = String::Flatten(subject);
   CHECK(regexp->GetFlags() & JSRegExp::kGlobal);
 
+  Object* result;
   if (regexp->CaptureCount() == 0) {
-    return SearchRegExpMultiple<false>(isolate, subject, regexp,
-                                       last_match_info, result_array);
+    result = SearchRegExpMultiple<false>(isolate, subject, regexp,
+                                         last_match_info, result_array);
   } else {
-    return SearchRegExpMultiple<true>(isolate, subject, regexp, last_match_info,
-                                      result_array);
+    result = SearchRegExpMultiple<true>(isolate, subject, regexp,
+                                        last_match_info, result_array);
   }
+  DCHECK(RegExpUtils::IsUnmodifiedRegExp(isolate, regexp));
+  return result;
 }
 
 RUNTIME_FUNCTION(Runtime_StringReplaceNonGlobalRegExpWithFunction) {
@@ -1296,7 +1298,7 @@ RUNTIME_FUNCTION(Runtime_StringReplaceNonGlobalRegExpWithFunction) {
 
   CONVERT_ARG_HANDLE_CHECKED(String, subject, 0);
   CONVERT_ARG_HANDLE_CHECKED(JSRegExp, regexp, 1);
-  CONVERT_ARG_HANDLE_CHECKED(JSObject, replace, 2);
+  CONVERT_ARG_HANDLE_CHECKED(String, replace, 2);
 
   DCHECK(RegExpUtils::IsUnmodifiedRegExp(isolate, regexp));
 
@@ -1535,14 +1537,6 @@ RUNTIME_FUNCTION(Runtime_RegExpReplace) {
 
   string = String::Flatten(string);
 
-  // Fast-path for unmodified JSRegExps.
-  if (RegExpUtils::IsUnmodifiedRegExp(isolate, recv)) {
-    RETURN_RESULT_OR_FAILURE(
-        isolate, RegExpReplace(isolate, Handle<JSRegExp>::cast(recv), string,
-                               replace_obj));
-  }
-
-  const uint32_t length = string->length();
   const bool functional_replace = replace_obj->IsCallable();
 
   Handle<String> replace;
@@ -1550,6 +1544,21 @@ RUNTIME_FUNCTION(Runtime_RegExpReplace) {
     ASSIGN_RETURN_FAILURE_ON_EXCEPTION(isolate, replace,
                                        Object::ToString(isolate, replace_obj));
   }
+
+  // Fast-path for unmodified JSRegExps (and non-functional replace).
+  if (RegExpUtils::IsUnmodifiedRegExp(isolate, recv)) {
+    // We should never get here with functional replace because unmodified
+    // regexp and functional replace should be fully handled in CSA code.
+    CHECK(!functional_replace);
+    Handle<Object> result;
+    ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
+        isolate, result,
+        RegExpReplace(isolate, Handle<JSRegExp>::cast(recv), string, replace));
+    DCHECK(RegExpUtils::IsUnmodifiedRegExp(isolate, recv));
+    return *result;
+  }
+
+  const uint32_t length = string->length();
 
   Handle<Object> global_obj;
   ASSIGN_RETURN_FAILURE_ON_EXCEPTION(
