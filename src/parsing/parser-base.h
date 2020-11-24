@@ -3830,7 +3830,8 @@ void ParserBase<Impl>::ParseFormalParameterList(FormalParametersT* parameters,
 
   if (peek() != Token::RPAREN) {
     while (true) {
-      if (parameters->arity > Code::kMaxArguments) {
+      // Add one since we're going to be adding a parameter.
+      if (parameters->arity + 1 > Code::kMaxArguments) {
         ReportMessage(MessageTemplate::kTooManyParameters);
         *ok = false;
         return;
