@@ -9,8 +9,8 @@
 #ifndef V8_OBJECTS_JS_LIST_FORMAT_INL_H_
 #define V8_OBJECTS_JS_LIST_FORMAT_INL_H_
 
-#include "src/objects-inl.h"
 #include "src/objects/js-list-format.h"
+#include "src/objects/objects-inl.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -18,13 +18,16 @@
 namespace v8 {
 namespace internal {
 
+#include "torque-generated/src/objects/js-list-format-tq-inl.inc"
+
+TQ_OBJECT_CONSTRUCTORS_IMPL(JSListFormat)
+
 // Base list format accessors.
-ACCESSORS(JSListFormat, locale, String, kLocaleOffset)
-ACCESSORS(JSListFormat, formatter, Foreign, kFormatterOffset)
-SMI_ACCESSORS(JSListFormat, flags, kFlagsOffset)
+ACCESSORS(JSListFormat, icu_formatter, Managed<icu::ListFormatter>,
+          kIcuFormatterOffset)
 
 inline void JSListFormat::set_style(Style style) {
-  DCHECK_GT(Style::COUNT, style);
+  DCHECK_GE(StyleBits::kMax, style);
   int hints = flags();
   hints = StyleBits::update(hints, style);
   set_flags(hints);
@@ -35,7 +38,7 @@ inline JSListFormat::Style JSListFormat::style() const {
 }
 
 inline void JSListFormat::set_type(Type type) {
-  DCHECK_GT(Type::COUNT, type);
+  DCHECK_GE(TypeBits::kMax, type);
   int hints = flags();
   hints = TypeBits::update(hints, type);
   set_flags(hints);
@@ -44,8 +47,6 @@ inline void JSListFormat::set_type(Type type) {
 inline JSListFormat::Type JSListFormat::type() const {
   return TypeBits::decode(flags());
 }
-
-CAST_ACCESSOR(JSListFormat);
 
 }  // namespace internal
 }  // namespace v8

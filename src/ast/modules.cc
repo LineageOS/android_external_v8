@@ -3,143 +3,187 @@
 // found in the LICENSE file.
 
 #include "src/ast/modules.h"
+
 #include "src/ast/ast-value-factory.h"
 #include "src/ast/scopes.h"
-#include "src/objects-inl.h"
+#include "src/heap/local-factory-inl.h"
 #include "src/objects/module-inl.h"
-#include "src/pending-compilation-error-handler.h"
+#include "src/objects/objects-inl.h"
+#include "src/parsing/pending-compilation-error-handler.h"
 
 namespace v8 {
 namespace internal {
 
-bool ModuleDescriptor::AstRawStringComparer::operator()(
+bool SourceTextModuleDescriptor::AstRawStringComparer::operator()(
     const AstRawString* lhs, const AstRawString* rhs) const {
+  return ThreeWayCompare(lhs, rhs) < 0;
+}
+
+int SourceTextModuleDescriptor::AstRawStringComparer::ThreeWayCompare(
+    const AstRawString* lhs, const AstRawString* rhs) {
   // Fast path for equal pointers: a pointer is not strictly less than itself.
   if (lhs == rhs) return false;
 
   // Order by contents (ordering by hash is unstable across runs).
   if (lhs->is_one_byte() != rhs->is_one_byte()) {
-    return lhs->is_one_byte();
+    return lhs->is_one_byte() ? -1 : 1;
   }
   if (lhs->byte_length() != rhs->byte_length()) {
-    return lhs->byte_length() < rhs->byte_length();
+    return lhs->byte_length() - rhs->byte_length();
   }
-  return memcmp(lhs->raw_data(), rhs->raw_data(), lhs->byte_length()) < 0;
+  return memcmp(lhs->raw_data(), rhs->raw_data(), lhs->byte_length());
 }
 
-void ModuleDescriptor::AddImport(const AstRawString* import_name,
-                                 const AstRawString* local_name,
-                                 const AstRawString* module_request,
-                                 const Scanner::Location loc,
-                                 const Scanner::Location specifier_loc,
-                                 Zone* zone) {
-  Entry* entry = new (zone) Entry(loc);
+bool SourceTextModuleDescriptor::ModuleRequestComparer::operator()(
+    const AstModuleRequest* lhs, const AstModuleRequest* rhs) const {
+  if (int specifier_comparison = AstRawStringComparer::ThreeWayCompare(
+          lhs->specifier(), rhs->specifier()))
+    return specifier_comparison < 0;
+
+  if (lhs->import_assertions()->size() != rhs->import_assertions()->size())
+    return (lhs->import_assertions()->size() <
+            rhs->import_assertions()->size());
+
+  auto lhsIt = lhs->import_assertions()->cbegin();
+  auto rhsIt = rhs->import_assertions()->cbegin();
+  for (; lhsIt != lhs->import_assertions()->cend(); ++lhsIt, ++rhsIt) {
+    if (int assertion_key_comparison =
+            AstRawStringComparer::ThreeWayCompare(lhsIt->first, rhsIt->first))
+      return assertion_key_comparison < 0;
+
+    if (int assertion_value_comparison = AstRawStringComparer::ThreeWayCompare(
+            lhsIt->second.first, rhsIt->second.first))
+      return assertion_value_comparison < 0;
+  }
+
+  return false;
+}
+
+void SourceTextModuleDescriptor::AddImport(
+    const AstRawString* import_name, const AstRawString* local_name,
+    const AstRawString* module_request,
+    const ImportAssertions* import_assertions, const Scanner::Location loc,
+    const Scanner::Location specifier_loc, Zone* zone) {
+  Entry* entry = zone->New<Entry>(loc);
   entry->local_name = local_name;
   entry->import_name = import_name;
-  entry->module_request = AddModuleRequest(module_request, specifier_loc);
+  entry->module_request =
+      AddModuleRequest(module_request, import_assertions, specifier_loc, zone);
   AddRegularImport(entry);
 }
 
-void ModuleDescriptor::AddStarImport(const AstRawString* local_name,
-                                     const AstRawString* module_request,
-                                     const Scanner::Location loc,
-                                     const Scanner::Location specifier_loc,
-                                     Zone* zone) {
-  Entry* entry = new (zone) Entry(loc);
+void SourceTextModuleDescriptor::AddStarImport(
+    const AstRawString* local_name, const AstRawString* module_request,
+    const ImportAssertions* import_assertions, const Scanner::Location loc,
+    const Scanner::Location specifier_loc, Zone* zone) {
+  Entry* entry = zone->New<Entry>(loc);
   entry->local_name = local_name;
-  entry->module_request = AddModuleRequest(module_request, specifier_loc);
+  entry->module_request =
+      AddModuleRequest(module_request, import_assertions, specifier_loc, zone);
   AddNamespaceImport(entry, zone);
 }
 
-void ModuleDescriptor::AddEmptyImport(const AstRawString* module_request,
-                                      const Scanner::Location specifier_loc) {
-  AddModuleRequest(module_request, specifier_loc);
+void SourceTextModuleDescriptor::AddEmptyImport(
+    const AstRawString* module_request,
+    const ImportAssertions* import_assertions,
+    const Scanner::Location specifier_loc, Zone* zone) {
+  AddModuleRequest(module_request, import_assertions, specifier_loc, zone);
 }
 
-
-void ModuleDescriptor::AddExport(
-    const AstRawString* local_name, const AstRawString* export_name,
-    Scanner::Location loc, Zone* zone) {
-  Entry* entry = new (zone) Entry(loc);
+void SourceTextModuleDescriptor::AddExport(const AstRawString* local_name,
+                                           const AstRawString* export_name,
+                                           Scanner::Location loc, Zone* zone) {
+  Entry* entry = zone->New<Entry>(loc);
   entry->export_name = export_name;
   entry->local_name = local_name;
   AddRegularExport(entry);
 }
 
-void ModuleDescriptor::AddExport(const AstRawString* import_name,
-                                 const AstRawString* export_name,
-                                 const AstRawString* module_request,
-                                 const Scanner::Location loc,
-                                 const Scanner::Location specifier_loc,
-                                 Zone* zone) {
+void SourceTextModuleDescriptor::AddExport(
+    const AstRawString* import_name, const AstRawString* export_name,
+    const AstRawString* module_request,
+    const ImportAssertions* import_assertions, const Scanner::Location loc,
+    const Scanner::Location specifier_loc, Zone* zone) {
   DCHECK_NOT_NULL(import_name);
   DCHECK_NOT_NULL(export_name);
-  Entry* entry = new (zone) Entry(loc);
+  Entry* entry = zone->New<Entry>(loc);
   entry->export_name = export_name;
   entry->import_name = import_name;
-  entry->module_request = AddModuleRequest(module_request, specifier_loc);
+  entry->module_request =
+      AddModuleRequest(module_request, import_assertions, specifier_loc, zone);
   AddSpecialExport(entry, zone);
 }
 
-void ModuleDescriptor::AddStarExport(const AstRawString* module_request,
-                                     const Scanner::Location loc,
-                                     const Scanner::Location specifier_loc,
-                                     Zone* zone) {
-  Entry* entry = new (zone) Entry(loc);
-  entry->module_request = AddModuleRequest(module_request, specifier_loc);
+void SourceTextModuleDescriptor::AddStarExport(
+    const AstRawString* module_request,
+    const ImportAssertions* import_assertions, const Scanner::Location loc,
+    const Scanner::Location specifier_loc, Zone* zone) {
+  Entry* entry = zone->New<Entry>(loc);
+  entry->module_request =
+      AddModuleRequest(module_request, import_assertions, specifier_loc, zone);
   AddSpecialExport(entry, zone);
 }
 
 namespace {
-
-Handle<Object> ToStringOrUndefined(Isolate* isolate, const AstRawString* s) {
-  return (s == nullptr)
-             ? Handle<Object>::cast(isolate->factory()->undefined_value())
-             : Handle<Object>::cast(s->string());
+template <typename LocalIsolate>
+Handle<PrimitiveHeapObject> ToStringOrUndefined(LocalIsolate* isolate,
+                                                const AstRawString* s) {
+  if (s == nullptr) return isolate->factory()->undefined_value();
+  return s->string();
 }
-
-const AstRawString* FromStringOrUndefined(Isolate* isolate,
-                                          AstValueFactory* avfactory,
-                                          Handle<Object> object) {
-  if (object->IsUndefined(isolate)) return nullptr;
-  return avfactory->GetString(Handle<String>::cast(object));
-}
-
 }  // namespace
 
-Handle<ModuleInfoEntry> ModuleDescriptor::Entry::Serialize(
-    Isolate* isolate) const {
+template <typename LocalIsolate>
+Handle<ModuleRequest> SourceTextModuleDescriptor::AstModuleRequest::Serialize(
+    LocalIsolate* isolate) const {
+  // The import assertions will be stored in this array in the form:
+  // [key1, value1, location1, key2, value2, location2, ...]
+  Handle<FixedArray> import_assertions_array =
+      isolate->factory()->NewFixedArray(
+          static_cast<int>(import_assertions()->size() * 3));
+
+  int i = 0;
+  for (auto iter = import_assertions()->cbegin();
+       iter != import_assertions()->cend(); ++iter, i += 3) {
+    import_assertions_array->set(i, *iter->first->string());
+    import_assertions_array->set(i + 1, *iter->second.first->string());
+    import_assertions_array->set(i + 2,
+                                 Smi::FromInt(iter->second.second.beg_pos));
+  }
+  return v8::internal::ModuleRequest::New(isolate, specifier()->string(),
+                                          import_assertions_array);
+}
+template Handle<ModuleRequest>
+SourceTextModuleDescriptor::AstModuleRequest::Serialize(Isolate* isolate) const;
+template Handle<ModuleRequest>
+SourceTextModuleDescriptor::AstModuleRequest::Serialize(
+    LocalIsolate* isolate) const;
+
+template <typename LocalIsolate>
+Handle<SourceTextModuleInfoEntry> SourceTextModuleDescriptor::Entry::Serialize(
+    LocalIsolate* isolate) const {
   CHECK(Smi::IsValid(module_request));  // TODO(neis): Check earlier?
-  return ModuleInfoEntry::New(
+  return SourceTextModuleInfoEntry::New(
       isolate, ToStringOrUndefined(isolate, export_name),
       ToStringOrUndefined(isolate, local_name),
       ToStringOrUndefined(isolate, import_name), module_request, cell_index,
       location.beg_pos, location.end_pos);
 }
+template Handle<SourceTextModuleInfoEntry>
+SourceTextModuleDescriptor::Entry::Serialize(Isolate* isolate) const;
+template Handle<SourceTextModuleInfoEntry>
+SourceTextModuleDescriptor::Entry::Serialize(LocalIsolate* isolate) const;
 
-ModuleDescriptor::Entry* ModuleDescriptor::Entry::Deserialize(
-    Isolate* isolate, AstValueFactory* avfactory,
-    Handle<ModuleInfoEntry> entry) {
-  Entry* result = new (avfactory->zone()) Entry(Scanner::Location::invalid());
-  result->export_name = FromStringOrUndefined(
-      isolate, avfactory, handle(entry->export_name(), isolate));
-  result->local_name = FromStringOrUndefined(
-      isolate, avfactory, handle(entry->local_name(), isolate));
-  result->import_name = FromStringOrUndefined(
-      isolate, avfactory, handle(entry->import_name(), isolate));
-  result->module_request = entry->module_request();
-  result->cell_index = entry->cell_index();
-  return result;
-}
-
-Handle<FixedArray> ModuleDescriptor::SerializeRegularExports(Isolate* isolate,
-                                                             Zone* zone) const {
+template <typename LocalIsolate>
+Handle<FixedArray> SourceTextModuleDescriptor::SerializeRegularExports(
+    LocalIsolate* isolate, Zone* zone) const {
   // We serialize regular exports in a way that lets us later iterate over their
   // local names and for each local name immediately access all its export
   // names.  (Regular exports have neither import name nor module request.)
 
   ZoneVector<Handle<Object>> data(
-      ModuleInfo::kRegularExportLength * regular_exports_.size(), zone);
+      SourceTextModuleInfo::kRegularExportLength * regular_exports_.size(),
+      zone);
   int index = 0;
 
   for (auto it = regular_exports_.begin(); it != regular_exports_.end();) {
@@ -154,12 +198,13 @@ Handle<FixedArray> ModuleDescriptor::SerializeRegularExports(Isolate* isolate,
     } while (next != regular_exports_.end() && next->first == it->first);
 
     Handle<FixedArray> export_names = isolate->factory()->NewFixedArray(count);
-    data[index + ModuleInfo::kRegularExportLocalNameOffset] =
+    data[index + SourceTextModuleInfo::kRegularExportLocalNameOffset] =
         it->second->local_name->string();
-    data[index + ModuleInfo::kRegularExportCellIndexOffset] =
+    data[index + SourceTextModuleInfo::kRegularExportCellIndexOffset] =
         handle(Smi::FromInt(it->second->cell_index), isolate);
-    data[index + ModuleInfo::kRegularExportExportNamesOffset] = export_names;
-    index += ModuleInfo::kRegularExportLength;
+    data[index + SourceTextModuleInfo::kRegularExportExportNamesOffset] =
+        export_names;
+    index += SourceTextModuleInfo::kRegularExportLength;
 
     // Collect the export names.
     int i = 0;
@@ -182,31 +227,12 @@ Handle<FixedArray> ModuleDescriptor::SerializeRegularExports(Isolate* isolate,
   }
   return result;
 }
+template Handle<FixedArray> SourceTextModuleDescriptor::SerializeRegularExports(
+    Isolate* isolate, Zone* zone) const;
+template Handle<FixedArray> SourceTextModuleDescriptor::SerializeRegularExports(
+    LocalIsolate* isolate, Zone* zone) const;
 
-void ModuleDescriptor::DeserializeRegularExports(
-    Isolate* isolate, AstValueFactory* avfactory,
-    Handle<ModuleInfo> module_info) {
-  for (int i = 0, count = module_info->RegularExportCount(); i < count; ++i) {
-    Handle<String> local_name(module_info->RegularExportLocalName(i), isolate);
-    int cell_index = module_info->RegularExportCellIndex(i);
-    Handle<FixedArray> export_names(module_info->RegularExportExportNames(i),
-                                    isolate);
-
-    for (int j = 0, length = export_names->length(); j < length; ++j) {
-      Handle<String> export_name(String::cast(export_names->get(j)), isolate);
-
-      Entry* entry =
-          new (avfactory->zone()) Entry(Scanner::Location::invalid());
-      entry->local_name = avfactory->GetString(local_name);
-      entry->export_name = avfactory->GetString(export_name);
-      entry->cell_index = cell_index;
-
-      AddRegularExport(entry);
-    }
-  }
-}
-
-void ModuleDescriptor::MakeIndirectExportsExplicit(Zone* zone) {
+void SourceTextModuleDescriptor::MakeIndirectExportsExplicit(Zone* zone) {
   for (auto it = regular_exports_.begin(); it != regular_exports_.end();) {
     Entry* entry = it->second;
     DCHECK_NOT_NULL(entry->local_name);
@@ -238,14 +264,14 @@ void ModuleDescriptor::MakeIndirectExportsExplicit(Zone* zone) {
   }
 }
 
-ModuleDescriptor::CellIndexKind ModuleDescriptor::GetCellIndexKind(
-    int cell_index) {
+SourceTextModuleDescriptor::CellIndexKind
+SourceTextModuleDescriptor::GetCellIndexKind(int cell_index) {
   if (cell_index > 0) return kExport;
   if (cell_index < 0) return kImport;
   return kInvalid;
 }
 
-void ModuleDescriptor::AssignCellIndices() {
+void SourceTextModuleDescriptor::AssignCellIndices() {
   int export_index = 1;
   for (auto it = regular_exports_.begin(); it != regular_exports_.end();) {
     auto current_key = it->first;
@@ -277,10 +303,11 @@ void ModuleDescriptor::AssignCellIndices() {
 
 namespace {
 
-const ModuleDescriptor::Entry* BetterDuplicate(
-    const ModuleDescriptor::Entry* candidate,
-    ZoneMap<const AstRawString*, const ModuleDescriptor::Entry*>& export_names,
-    const ModuleDescriptor::Entry* current_duplicate) {
+const SourceTextModuleDescriptor::Entry* BetterDuplicate(
+    const SourceTextModuleDescriptor::Entry* candidate,
+    ZoneMap<const AstRawString*, const SourceTextModuleDescriptor::Entry*>&
+        export_names,
+    const SourceTextModuleDescriptor::Entry* current_duplicate) {
   DCHECK_NOT_NULL(candidate->export_name);
   DCHECK(candidate->location.IsValid());
   auto insert_result =
@@ -296,11 +323,11 @@ const ModuleDescriptor::Entry* BetterDuplicate(
 
 }  // namespace
 
-const ModuleDescriptor::Entry* ModuleDescriptor::FindDuplicateExport(
-    Zone* zone) const {
-  const ModuleDescriptor::Entry* duplicate = nullptr;
-  ZoneMap<const AstRawString*, const ModuleDescriptor::Entry*> export_names(
-      zone);
+const SourceTextModuleDescriptor::Entry*
+SourceTextModuleDescriptor::FindDuplicateExport(Zone* zone) const {
+  const SourceTextModuleDescriptor::Entry* duplicate = nullptr;
+  ZoneMap<const AstRawString*, const SourceTextModuleDescriptor::Entry*>
+      export_names(zone);
   for (const auto& elem : regular_exports_) {
     duplicate = BetterDuplicate(elem.second, export_names, duplicate);
   }
@@ -311,9 +338,9 @@ const ModuleDescriptor::Entry* ModuleDescriptor::FindDuplicateExport(
   return duplicate;
 }
 
-bool ModuleDescriptor::Validate(ModuleScope* module_scope,
-                                PendingCompilationErrorHandler* error_handler,
-                                Zone* zone) {
+bool SourceTextModuleDescriptor::Validate(
+    ModuleScope* module_scope, PendingCompilationErrorHandler* error_handler,
+    Zone* zone) {
   DCHECK_EQ(this, module_scope->module());
   DCHECK_NOT_NULL(error_handler);
 

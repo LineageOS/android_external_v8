@@ -12,9 +12,13 @@
 #endif
 
 #if V8_OS_MACOSX
-#include <mach/semaphore.h>  // NOLINT
+#include <dispatch/dispatch.h>  // NOLINT
 #elif V8_OS_POSIX
 #include <semaphore.h>  // NOLINT
+#endif
+
+#if V8_OS_STARBOARD
+#include "starboard/common/semaphore.h"
 #endif
 
 namespace v8 {
@@ -35,6 +39,8 @@ class TimeDelta;
 class V8_BASE_EXPORT Semaphore final {
  public:
   explicit Semaphore(int count);
+  Semaphore(const Semaphore&) = delete;
+  Semaphore& operator=(const Semaphore&) = delete;
   ~Semaphore();
 
   // Increments the semaphore counter.
@@ -50,11 +56,13 @@ class V8_BASE_EXPORT Semaphore final {
   bool WaitFor(const TimeDelta& rel_time) V8_WARN_UNUSED_RESULT;
 
 #if V8_OS_MACOSX
-  typedef semaphore_t NativeHandle;
+  using NativeHandle = dispatch_semaphore_t;
 #elif V8_OS_POSIX
-  typedef sem_t NativeHandle;
+  using NativeHandle = sem_t;
 #elif V8_OS_WIN
-  typedef HANDLE NativeHandle;
+  using NativeHandle = HANDLE;
+#elif V8_OS_STARBOARD
+  using NativeHandle = starboard::Semaphore;
 #endif
 
   NativeHandle& native_handle() {
@@ -66,8 +74,6 @@ class V8_BASE_EXPORT Semaphore final {
 
  private:
   NativeHandle native_handle_;
-
-  DISALLOW_COPY_AND_ASSIGN(Semaphore);
 };
 
 
@@ -90,8 +96,8 @@ struct CreateSemaphoreTrait {
 
 template <int N>
 struct LazySemaphore {
-  typedef typename LazyDynamicInstance<Semaphore, CreateSemaphoreTrait<N>,
-                                       ThreadSafeInitOnceTrait>::type type;
+  using typename LazyDynamicInstance<Semaphore, CreateSemaphoreTrait<N>,
+                                     ThreadSafeInitOnceTrait>::type;
 };
 
 #define LAZY_SEMAPHORE_INITIALIZER LAZY_DYNAMIC_INSTANCE_INITIALIZER

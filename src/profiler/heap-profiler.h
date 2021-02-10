@@ -10,8 +10,8 @@
 
 #include "include/v8-profiler.h"
 #include "src/base/platform/mutex.h"
+#include "src/common/globals.h"
 #include "src/debug/debug-interface.h"
-#include "src/globals.h"
 #include "src/heap/heap.h"
 
 namespace v8 {
@@ -27,11 +27,11 @@ class StringsStorage;
 class HeapProfiler : public HeapObjectAllocationTracker {
  public:
   explicit HeapProfiler(Heap* heap);
-  ~HeapProfiler();
+  ~HeapProfiler() override;
 
-  HeapSnapshot* TakeSnapshot(
-      v8::ActivityControl* control,
-      v8::HeapProfiler::ObjectNameResolver* resolver);
+  HeapSnapshot* TakeSnapshot(v8::ActivityControl* control,
+                             v8::HeapProfiler::ObjectNameResolver* resolver,
+                             bool treat_global_objects_as_roots);
 
   bool StartSamplingHeapProfiler(uint64_t sample_interval, int stack_depth,
                                  v8::HeapProfiler::SamplingFlags);
@@ -49,9 +49,11 @@ class HeapProfiler : public HeapObjectAllocationTracker {
 
   SnapshotObjectId PushHeapObjectsStats(OutputStream* stream,
                                         int64_t* timestamp_us);
-  int GetSnapshotsCount();
+  int GetSnapshotsCount() const;
+  bool IsTakingSnapshot() const;
   HeapSnapshot* GetSnapshot(int index);
   SnapshotObjectId GetSnapshotObjectId(Handle<Object> obj);
+  SnapshotObjectId GetSnapshotObjectId(NativeObject obj);
   void DeleteAllSnapshots();
   void RemoveSnapshot(HeapSnapshot* snapshot);
 
@@ -61,16 +63,6 @@ class HeapProfiler : public HeapObjectAllocationTracker {
 
   void UpdateObjectSizeEvent(Address addr, int size) override;
 
-  void DefineWrapperClass(
-      uint16_t class_id, v8::HeapProfiler::WrapperInfoCallback callback);
-
-  v8::RetainedObjectInfo* ExecuteWrapperClassCallback(uint16_t class_id,
-                                                      Object** wrapper);
-
-  void SetGetRetainerInfosCallback(
-      v8::HeapProfiler::GetRetainerInfosCallback callback);
-  v8::HeapProfiler::RetainerInfos GetRetainerInfos(Isolate* isolate);
-
   void AddBuildEmbedderGraphCallback(
       v8::HeapProfiler::BuildEmbedderGraphCallback callback, void* data);
   void RemoveBuildEmbedderGraphCallback(
@@ -79,6 +71,14 @@ class HeapProfiler : public HeapObjectAllocationTracker {
   bool HasBuildEmbedderGraphCallback() {
     return !build_embedder_graph_callbacks_.empty();
   }
+
+  void SetGetDetachednessCallback(
+      v8::HeapProfiler::GetDetachednessCallback callback, void* data);
+  bool HasGetDetachednessCallback() const {
+    return get_detachedness_callback_.first != nullptr;
+  }
+  v8::EmbedderGraph::Node::Detachedness GetDetachedness(
+      const v8::Local<v8::Value> v8_value, uint16_t class_id);
 
   bool is_tracking_object_moves() const { return is_tracking_object_moves_; }
 
@@ -92,21 +92,23 @@ class HeapProfiler : public HeapObjectAllocationTracker {
                     v8::PersistentValueVector<v8::Object>* objects);
 
  private:
+  void MaybeClearStringsStorage();
+
   Heap* heap() const;
 
   // Mapping from HeapObject addresses to objects' uids.
   std::unique_ptr<HeapObjectsMap> ids_;
   std::vector<std::unique_ptr<HeapSnapshot>> snapshots_;
   std::unique_ptr<StringsStorage> names_;
-  std::vector<v8::HeapProfiler::WrapperInfoCallback> wrapper_callbacks_;
   std::unique_ptr<AllocationTracker> allocation_tracker_;
   bool is_tracking_object_moves_;
+  bool is_taking_snapshot_;
   base::Mutex profiler_mutex_;
   std::unique_ptr<SamplingHeapProfiler> sampling_heap_profiler_;
-  v8::HeapProfiler::GetRetainerInfosCallback get_retainer_infos_callback_ =
-      nullptr;
   std::vector<std::pair<v8::HeapProfiler::BuildEmbedderGraphCallback, void*>>
       build_embedder_graph_callbacks_;
+  std::pair<v8::HeapProfiler::GetDetachednessCallback, void*>
+      get_detachedness_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(HeapProfiler);
 };

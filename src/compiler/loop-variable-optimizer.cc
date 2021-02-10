@@ -158,6 +158,7 @@ void LoopVariableOptimizer::VisitIf(Node* node, bool polarity) {
   // Normalize to less than comparison.
   switch (cond->opcode()) {
     case IrOpcode::kJSLessThan:
+    case IrOpcode::kNumberLessThan:
     case IrOpcode::kSpeculativeNumberLessThan:
       AddCmpToLimits(&limits, cond, InductionVariable::kStrict, polarity);
       break;
@@ -165,6 +166,7 @@ void LoopVariableOptimizer::VisitIf(Node* node, bool polarity) {
       AddCmpToLimits(&limits, cond, InductionVariable::kNonStrict, !polarity);
       break;
     case IrOpcode::kJSLessThanOrEqual:
+    case IrOpcode::kNumberLessThanOrEqual:
     case IrOpcode::kSpeculativeNumberLessThanOrEqual:
       AddCmpToLimits(&limits, cond, InductionVariable::kNonStrict, polarity);
       break;
@@ -226,10 +228,12 @@ InductionVariable* LoopVariableOptimizer::TryGetInductionVariable(Node* phi) {
   Node* arith = phi->InputAt(1);
   InductionVariable::ArithmeticType arithmeticType;
   if (arith->opcode() == IrOpcode::kJSAdd ||
+      arith->opcode() == IrOpcode::kNumberAdd ||
       arith->opcode() == IrOpcode::kSpeculativeNumberAdd ||
       arith->opcode() == IrOpcode::kSpeculativeSafeIntegerAdd) {
     arithmeticType = InductionVariable::ArithmeticType::kAddition;
   } else if (arith->opcode() == IrOpcode::kJSSubtract ||
+             arith->opcode() == IrOpcode::kNumberSubtract ||
              arith->opcode() == IrOpcode::kSpeculativeNumberSubtract ||
              arith->opcode() == IrOpcode::kSpeculativeSafeIntegerSubtract) {
     arithmeticType = InductionVariable::ArithmeticType::kSubtraction;
@@ -256,7 +260,7 @@ InductionVariable* LoopVariableOptimizer::TryGetInductionVariable(Node* phi) {
   if (!effect_phi) return nullptr;
 
   Node* incr = arith->InputAt(1);
-  return new (zone()) InductionVariable(phi, effect_phi, arith, incr, initial,
+  return zone()->New<InductionVariable>(phi, effect_phi, arith, incr, initial,
                                         zone(), arithmeticType);
 }
 
