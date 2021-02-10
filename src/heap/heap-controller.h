@@ -6,72 +6,54 @@
 #define V8_HEAP_HEAP_CONTROLLER_H_
 
 #include <cstddef>
-#include "src/allocation.h"
 #include "src/heap/heap.h"
+#include "src/utils/allocation.h"
 #include "testing/gtest/include/gtest/gtest_prod.h"  // nogncheck
 
 namespace v8 {
 namespace internal {
 
-class V8_EXPORT_PRIVATE MemoryController {
- public:
-  MemoryController(Heap* heap, double min_growing_factor,
-                   double max_growing_factor,
-                   double conservative_growing_factor,
-                   double target_mutator_utilization, size_t min_size,
-                   size_t max_size)
-      : heap_(heap),
-        kMinGrowingFactor(min_growing_factor),
-        kMaxGrowingFactor(max_growing_factor),
-        kConservativeGrowingFactor(conservative_growing_factor),
-        kTargetMutatorUtilization(target_mutator_utilization),
-        kMinSize(min_size),
-        kMaxSize(max_size) {}
-  virtual ~MemoryController() {}
+struct BaseControllerTrait {
+  static constexpr size_t kMinSize = 128u * Heap::kHeapLimitMultiplier * MB;
+  static constexpr size_t kMaxSize = 1024u * Heap::kHeapLimitMultiplier * MB;
 
-  // Computes the allocation limit to trigger the next garbage collection.
-  size_t CalculateAllocationLimit(size_t curr_size, size_t max_size,
-                                  double gc_speed, double mutator_speed,
-                                  size_t new_space_capacity,
-                                  Heap::HeapGrowingMode growing_mode);
-
-  // Computes the growing step when the limit increases.
-  size_t MinimumAllocationLimitGrowingStep(Heap::HeapGrowingMode growing_mode);
-
- protected:
-  double GrowingFactor(double gc_speed, double mutator_speed,
-                       double max_factor);
-  double MaxGrowingFactor(size_t curr_max_size);
-  virtual const char* ControllerName() = 0;
-
-  Heap* const heap_;
-
-  const double kMinGrowingFactor;
-  const double kMaxGrowingFactor;
-  const double kConservativeGrowingFactor;
-  const double kTargetMutatorUtilization;
-  // Sizes are in MB.
-  const size_t kMinSize;
-  const size_t kMaxSize;
-
-  FRIEND_TEST(HeapControllerTest, HeapGrowingFactor);
-  FRIEND_TEST(HeapControllerTest, MaxHeapGrowingFactor);
-  FRIEND_TEST(HeapControllerTest, MaxOldGenerationSize);
-  FRIEND_TEST(HeapControllerTest, OldGenerationAllocationLimit);
+  static constexpr double kMinGrowingFactor = 1.1;
+  static constexpr double kMaxGrowingFactor = 4.0;
+  static constexpr double kConservativeGrowingFactor = 1.3;
+  static constexpr double kTargetMutatorUtilization = 0.97;
 };
 
-class HeapController : public MemoryController {
+struct V8HeapTrait : public BaseControllerTrait {
+  static const char* kName;
+};
+
+struct GlobalMemoryTrait : public BaseControllerTrait {
+  static const char* kName;
+};
+
+template <typename Trait>
+class V8_EXPORT_PRIVATE MemoryController : public AllStatic {
  public:
-  explicit HeapController(Heap* heap)
-      : MemoryController(heap, 1.1, 4.0, 1.3, 0.97, kMinHeapSize,
-                         kMaxHeapSize) {}
+  // Computes the growing step when the limit increases.
+  static size_t MinimumAllocationLimitGrowingStep(
+      Heap::HeapGrowingMode growing_mode);
 
-  // Sizes are in MB.
-  static const size_t kMinHeapSize = 128 * Heap::kPointerMultiplier;
-  static const size_t kMaxHeapSize = 1024 * Heap::kPointerMultiplier;
+  static double GrowingFactor(Heap* heap, size_t max_heap_size, double gc_speed,
+                              double mutator_speed);
 
- protected:
-  const char* ControllerName() { return "HeapController"; }
+  static size_t CalculateAllocationLimit(Heap* heap, size_t current_size,
+                                         size_t min_size, size_t max_size,
+                                         size_t new_space_capacity,
+                                         double factor,
+                                         Heap::HeapGrowingMode growing_mode);
+
+ private:
+  static double MaxGrowingFactor(size_t max_heap_size);
+  static double DynamicGrowingFactor(double gc_speed, double mutator_speed,
+                                     double max_factor);
+
+  FRIEND_TEST(MemoryControllerTest, HeapGrowingFactor);
+  FRIEND_TEST(MemoryControllerTest, MaxHeapGrowingFactor);
 };
 
 }  // namespace internal

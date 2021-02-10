@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "src/arguments-inl.h"
-#include "src/conversions-inl.h"
+#include "src/execution/arguments-inl.h"
 #include "src/heap/factory.h"
+#include "src/heap/heap-inl.h"  // For ToBoolean. TODO(jkummerow): Drop.
+#include "src/logging/counters.h"
+#include "src/numbers/conversions-inl.h"
 #include "src/objects/hash-table-inl.h"
 #include "src/objects/js-collection-inl.h"
 #include "src/runtime/runtime-utils.h"
@@ -23,11 +25,15 @@ RUNTIME_FUNCTION(Runtime_SetGrow) {
   DCHECK_EQ(1, args.length());
   CONVERT_ARG_HANDLE_CHECKED(JSSet, holder, 0);
   Handle<OrderedHashSet> table(OrderedHashSet::cast(holder->table()), isolate);
-  table = OrderedHashSet::EnsureGrowable(isolate, table);
+  MaybeHandle<OrderedHashSet> table_candidate =
+      OrderedHashSet::EnsureGrowable(isolate, table);
+  if (!table_candidate.ToHandle(&table)) {
+    THROW_NEW_ERROR_RETURN_FAILURE(
+        isolate, NewRangeError(MessageTemplate::kValueOutOfRange));
+  }
   holder->set_table(*table);
   return ReadOnlyRoots(isolate).undefined_value();
 }
-
 
 RUNTIME_FUNCTION(Runtime_SetShrink) {
   HandleScope scope(isolate);
@@ -37,16 +43,6 @@ RUNTIME_FUNCTION(Runtime_SetShrink) {
   table = OrderedHashSet::Shrink(isolate, table);
   holder->set_table(*table);
   return ReadOnlyRoots(isolate).undefined_value();
-}
-
-RUNTIME_FUNCTION(Runtime_SetIteratorClone) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(1, args.length());
-  CONVERT_ARG_HANDLE_CHECKED(JSSetIterator, holder, 0);
-  return *isolate->factory()->NewJSSetIterator(
-      handle(holder->map(), isolate),
-      handle(OrderedHashSet::cast(holder->table()), isolate),
-      Smi::ToInt(holder->index()));
 }
 
 RUNTIME_FUNCTION(Runtime_MapShrink) {
@@ -64,28 +60,14 @@ RUNTIME_FUNCTION(Runtime_MapGrow) {
   DCHECK_EQ(1, args.length());
   CONVERT_ARG_HANDLE_CHECKED(JSMap, holder, 0);
   Handle<OrderedHashMap> table(OrderedHashMap::cast(holder->table()), isolate);
-  table = OrderedHashMap::EnsureGrowable(isolate, table);
+  MaybeHandle<OrderedHashMap> table_candidate =
+      OrderedHashMap::EnsureGrowable(isolate, table);
+  if (!table_candidate.ToHandle(&table)) {
+    THROW_NEW_ERROR_RETURN_FAILURE(
+        isolate, NewRangeError(MessageTemplate::kValueOutOfRange));
+  }
   holder->set_table(*table);
   return ReadOnlyRoots(isolate).undefined_value();
-}
-
-RUNTIME_FUNCTION(Runtime_MapIteratorClone) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(1, args.length());
-  CONVERT_ARG_HANDLE_CHECKED(JSMapIterator, holder, 0);
-  return *isolate->factory()->NewJSMapIterator(
-      handle(holder->map(), isolate),
-      handle(OrderedHashMap::cast(holder->table()), isolate),
-      Smi::ToInt(holder->index()));
-}
-
-RUNTIME_FUNCTION(Runtime_GetWeakMapEntries) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(2, args.length());
-  CONVERT_ARG_HANDLE_CHECKED(JSWeakCollection, holder, 0);
-  CONVERT_NUMBER_CHECKED(int, max_entries, Int32, args[1]);
-  CHECK_GE(max_entries, 0);
-  return *JSWeakCollection::GetEntries(holder, max_entries);
 }
 
 RUNTIME_FUNCTION(Runtime_WeakCollectionDelete) {
@@ -97,7 +79,7 @@ RUNTIME_FUNCTION(Runtime_WeakCollectionDelete) {
 
 #ifdef DEBUG
   DCHECK(key->IsJSReceiver());
-  DCHECK(EphemeronHashTableShape::IsLive(ReadOnlyRoots(isolate), *key));
+  DCHECK(EphemeronHashTable::IsKey(ReadOnlyRoots(isolate), *key));
   Handle<EphemeronHashTable> table(
       EphemeronHashTable::cast(weak_collection->table()), isolate);
   // Should only be called when shrinking the table is necessary. See
@@ -110,15 +92,6 @@ RUNTIME_FUNCTION(Runtime_WeakCollectionDelete) {
   return isolate->heap()->ToBoolean(was_present);
 }
 
-RUNTIME_FUNCTION(Runtime_GetWeakSetValues) {
-  HandleScope scope(isolate);
-  DCHECK_EQ(2, args.length());
-  CONVERT_ARG_HANDLE_CHECKED(JSWeakCollection, holder, 0);
-  CONVERT_NUMBER_CHECKED(int, max_values, Int32, args[1]);
-  CHECK_GE(max_values, 0);
-  return *JSWeakCollection::GetEntries(holder, max_values);
-}
-
 RUNTIME_FUNCTION(Runtime_WeakCollectionSet) {
   HandleScope scope(isolate);
   DCHECK_EQ(4, args.length());
@@ -129,7 +102,7 @@ RUNTIME_FUNCTION(Runtime_WeakCollectionSet) {
 
 #ifdef DEBUG
   DCHECK(key->IsJSReceiver());
-  DCHECK(EphemeronHashTableShape::IsLive(ReadOnlyRoots(isolate), *key));
+  DCHECK(EphemeronHashTable::IsKey(ReadOnlyRoots(isolate), *key));
   Handle<EphemeronHashTable> table(
       EphemeronHashTable::cast(weak_collection->table()), isolate);
   // Should only be called when rehashing or resizing the table is necessary.

@@ -19,7 +19,7 @@ class BytecodeRegisterAllocator final {
   // Enables observation of register allocation and free events.
   class Observer {
    public:
-    virtual ~Observer() {}
+    virtual ~Observer() = default;
     virtual void RegisterAllocateEvent(Register reg) = 0;
     virtual void RegisterListAllocateEvent(RegisterList reg_list) = 0;
     virtual void RegisterListFreeEvent(RegisterList reg_list) = 0;
@@ -29,7 +29,10 @@ class BytecodeRegisterAllocator final {
       : next_register_index_(start_index),
         max_register_count_(start_index),
         observer_(nullptr) {}
-  ~BytecodeRegisterAllocator() {}
+  ~BytecodeRegisterAllocator() = default;
+  BytecodeRegisterAllocator(const BytecodeRegisterAllocator&) = delete;
+  BytecodeRegisterAllocator& operator=(const BytecodeRegisterAllocator&) =
+      delete;
 
   // Returns a new register.
   Register NewRegister() {
@@ -101,8 +104,6 @@ class BytecodeRegisterAllocator final {
   int next_register_index_;
   int max_register_count_;
   Observer* observer_;
-
-  DISALLOW_COPY_AND_ASSIGN(BytecodeRegisterAllocator);
 };
 
 }  // namespace interpreter

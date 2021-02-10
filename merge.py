@@ -13,8 +13,7 @@ UNWANTED_DIRS = [
   'test/',
   'third_party/',
   'buildtools/',
-  'tools/gyp',
-  'tools/swarming_client'
+  'tools/'
 ]
 
 parser = argparse.ArgumentParser(description='Merge a new version of V8.')

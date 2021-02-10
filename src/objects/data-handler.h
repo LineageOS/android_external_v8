@@ -5,13 +5,16 @@
 #ifndef V8_OBJECTS_DATA_HANDLER_H_
 #define V8_OBJECTS_DATA_HANDLER_H_
 
-#include "src/objects.h"
+#include "src/objects/struct.h"
+#include "torque-generated/field-offsets.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
 
 namespace v8 {
 namespace internal {
+
+#include "torque-generated/src/objects/data-handler-tq.inc"
 
 // DataHandler is a base class for load and store handlers that can't be
 // encoded in one Smi. Kind of a handler can be deduced from instance type.
@@ -35,26 +38,21 @@ class DataHandler : public Struct {
   DECL_ACCESSORS(data2, MaybeObject)
   DECL_ACCESSORS(data3, MaybeObject)
 
-// Layout description.
-#define DATA_HANDLER_FIELDS(V)         \
-  V(kSmiHandlerOffset, kPointerSize)   \
-  V(kValidityCellOffset, kPointerSize) \
-  V(kSizeWithData0, 0)                 \
-  V(kData1Offset, kPointerSize)        \
-  V(kSizeWithData1, 0)                 \
-  V(kData2Offset, kPointerSize)        \
-  V(kSizeWithData2, 0)                 \
-  V(kData3Offset, kPointerSize)        \
-  V(kSizeWithData3, 0)
+  DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize,
+                                TORQUE_GENERATED_DATA_HANDLER_FIELDS)
 
-  DEFINE_FIELD_OFFSET_CONSTANTS(HeapObject::kHeaderSize, DATA_HANDLER_FIELDS)
-#undef DATA_HANDLER_FIELDS
+  static const int kSizeWithData0 = kData1Offset;
+  static const int kSizeWithData1 = kData2Offset;
+  static const int kSizeWithData2 = kData3Offset;
+  static const int kSizeWithData3 = kHeaderSize;
 
   DECL_CAST(DataHandler)
 
   DECL_VERIFIER(DataHandler)
 
   class BodyDescriptor;
+
+  OBJECT_CONSTRUCTORS(DataHandler, Struct);
 };
 
 }  // namespace internal

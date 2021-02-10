@@ -5,14 +5,14 @@
 #ifndef V8_BUILTINS_BUILTINS_LAZY_GEN_H_
 #define V8_BUILTINS_BUILTINS_LAZY_GEN_H_
 
-#include "src/code-stub-assembler.h"
+#include "src/codegen/code-stub-assembler.h"
 
 namespace v8 {
 namespace internal {
 
 class LazyBuiltinsAssembler : public CodeStubAssembler {
  public:
-  typedef JSTrampolineDescriptor Descriptor;
+  using Descriptor = JSTrampolineDescriptor;
 
   explicit LazyBuiltinsAssembler(compiler::CodeAssemblerState* state)
       : CodeStubAssembler(state) {}
@@ -21,7 +21,7 @@ class LazyBuiltinsAssembler : public CodeStubAssembler {
 
   void GenerateTailCallToReturnedCode(Runtime::FunctionId function_id,
                                       TNode<JSFunction> function);
-  void TailCallRuntimeIfMarkerEquals(TNode<Smi> marker,
+  void TailCallRuntimeIfMarkerEquals(TNode<Uint32T> marker,
                                      OptimizationMarker expected_marker,
                                      Runtime::FunctionId function_id,
                                      TNode<JSFunction> function);

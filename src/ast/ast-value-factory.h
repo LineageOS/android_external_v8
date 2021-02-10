@@ -31,11 +31,10 @@
 #include <forward_list>
 
 #include "src/base/hashmap.h"
-#include "src/conversions.h"
-#include "src/globals.h"
+#include "src/base/logging.h"
+#include "src/common/globals.h"
 #include "src/heap/factory.h"
-#include "src/isolate.h"
-#include "src/utils.h"
+#include "src/numbers/conversions.h"
 
 // Ast(Raw|Cons)String and AstValueFactory are for storing strings and
 // values independent of the V8 heap and internalizing them later. During
@@ -45,25 +44,31 @@
 namespace v8 {
 namespace internal {
 
+class Isolate;
+
 class AstRawString final : public ZoneObject {
  public:
+  static bool Compare(const AstRawString* a, const AstRawString* b);
+
   bool IsEmpty() const { return literal_bytes_.length() == 0; }
   int length() const {
     return is_one_byte() ? literal_bytes_.length()
                          : literal_bytes_.length() / 2;
   }
   bool AsArrayIndex(uint32_t* index) const;
-  bool IsOneByteEqualTo(const char* data) const;
+  bool IsIntegerIndex() const;
+  V8_EXPORT_PRIVATE bool IsOneByteEqualTo(const char* data) const;
   uint16_t FirstCharacter() const;
 
-  void Internalize(Isolate* isolate);
+  template <typename LocalIsolate>
+  void Internalize(LocalIsolate* isolate);
 
   // Access the physical representation:
   bool is_one_byte() const { return is_one_byte_; }
   int byte_length() const { return literal_bytes_.length(); }
-  const unsigned char* raw_data() const {
-    return literal_bytes_.start();
-  }
+  const unsigned char* raw_data() const { return literal_bytes_.begin(); }
+
+  bool IsPrivateName() const { return length() > 0 && FirstCharacter() == '#'; }
 
   // For storing AstRawStrings in a hash map.
   uint32_t hash_field() const { return hash_field_; }
@@ -71,18 +76,17 @@ class AstRawString final : public ZoneObject {
 
   // This function can be called after internalizing.
   V8_INLINE Handle<String> string() const {
-    DCHECK_NOT_NULL(string_);
     DCHECK(has_string_);
-    return Handle<String>(string_);
+    return string_;
   }
 
  private:
   friend class AstRawStringInternalizationKey;
   friend class AstStringConstants;
   friend class AstValueFactory;
+  friend Zone;
 
   // Members accessed only by the AstValueFactory & related classes:
-  static bool Compare(void* a, void* b);
   AstRawString(bool is_one_byte, const Vector<const byte>& literal_bytes,
                uint32_t hash_field)
       : next_(nullptr),
@@ -101,17 +105,15 @@ class AstRawString final : public ZoneObject {
   void set_string(Handle<String> string) {
     DCHECK(!string.is_null());
     DCHECK(!has_string_);
-    string_ = string.location();
+    string_ = string;
 #ifdef DEBUG
     has_string_ = true;
 #endif
   }
 
-  // {string_} is stored as String** instead of a Handle<String> so it can be
-  // stored in a union with {next_}.
   union {
     AstRawString* next_;
-    String** string_;
+    Handle<String> string_;
   };
 
   Vector<const byte> literal_bytes_;  // Memory owned by Zone.
@@ -125,6 +127,11 @@ class AstRawString final : public ZoneObject {
 #endif
 };
 
+extern template EXPORT_TEMPLATE_DECLARE(
+    V8_EXPORT_PRIVATE) void AstRawString::Internalize(Isolate* isolate);
+extern template EXPORT_TEMPLATE_DECLARE(
+    V8_EXPORT_PRIVATE) void AstRawString::Internalize(LocalIsolate* isolate);
+
 class AstConsString final : public ZoneObject {
  public:
   AstConsString* AddString(Zone* zone, const AstRawString* s) {
@@ -132,8 +139,7 @@ class AstConsString final : public ZoneObject {
     if (!IsEmpty()) {
       // We're putting the new string to the head of the list, meaning
       // the string segments will be in reverse order.
-      Segment* tmp = new (zone->New(sizeof(Segment))) Segment;
-      *tmp = segment_;
+      Segment* tmp = zone->New<Segment>(segment_);
       segment_.next = tmp;
     }
     segment_.string = s;
@@ -146,31 +152,38 @@ class AstConsString final : public ZoneObject {
     return segment_.string == nullptr;
   }
 
-  void Internalize(Isolate* isolate);
-
-  V8_INLINE Handle<String> string() const {
-    DCHECK_NOT_NULL(string_);
-    return Handle<String>(string_);
+  template <typename LocalIsolate>
+  Handle<String> GetString(LocalIsolate* isolate) {
+    if (string_.is_null()) {
+      string_ = Allocate(isolate);
+    }
+    return string_;
   }
+
+  template <typename LocalIsolate>
+  EXPORT_TEMPLATE_DECLARE(V8_EXPORT_PRIVATE)
+  Handle<String> AllocateFlat(LocalIsolate* isolate) const;
 
   std::forward_list<const AstRawString*> ToRawStrings() const;
 
  private:
   friend class AstValueFactory;
+  friend Zone;
 
-  AstConsString() : next_(nullptr), segment_({nullptr, nullptr}) {}
+  AstConsString() : string_(), segment_({nullptr, nullptr}) {}
 
-  AstConsString* next() const { return next_; }
-  AstConsString** next_location() { return &next_; }
+  template <typename LocalIsolate>
+  EXPORT_TEMPLATE_DECLARE(V8_EXPORT_PRIVATE)
+  Handle<String> Allocate(LocalIsolate* isolate) const;
 
-  // {string_} is stored as String** instead of a Handle<String> so it can be
-  // stored in a union with {next_}.
-  void set_string(Handle<String> string) { string_ = string.location(); }
-  union {
-    AstConsString* next_;
-    String** string_;
-  };
+  Handle<String> string_;
 
+  // A linked list of AstRawStrings of the contents of this AstConsString.
+  // This list has several properties:
+  //
+  //   * For empty strings the string pointer is null,
+  //   * Appended raw strings are added to the head of the list, so they are in
+  //     reverse order
   struct Segment {
     const AstRawString* string;
     AstConsString::Segment* next;
@@ -193,49 +206,72 @@ class AstBigInt {
   const char* bigint_;
 };
 
+struct AstRawStringMapMatcher {
+  bool operator()(uint32_t hash1, uint32_t hash2,
+                  const AstRawString* lookup_key,
+                  const AstRawString* entry_key) const {
+    return hash1 == hash2 && AstRawString::Compare(lookup_key, entry_key);
+  }
+};
+
+using AstRawStringMap =
+    base::TemplateHashMapImpl<const AstRawString*, base::NoHashMapValue,
+                              AstRawStringMapMatcher,
+                              base::DefaultAllocationPolicy>;
+
 // For generating constants.
-#define AST_STRING_CONSTANTS(F)                                      \
-  F(anonymous_function, "(anonymous function)")                      \
-  F(arguments, "arguments")                                          \
-  F(async, "async")                                                  \
-  F(await, "await")                                                  \
-  F(bigint, "bigint")                                                \
-  F(boolean, "boolean")                                              \
-  F(constructor, "constructor")                                      \
-  F(default, "default")                                              \
-  F(done, "done")                                                    \
-  F(dot, ".")                                                        \
-  F(dot_for, ".for")                                                 \
-  F(dot_generator_object, ".generator_object")                       \
-  F(dot_iterator, ".iterator")                                       \
-  F(dot_result, ".result")                                           \
-  F(dot_switch_tag, ".switch_tag")                                   \
-  F(dot_catch, ".catch")                                             \
-  F(empty, "")                                                       \
-  F(eval, "eval")                                                    \
-  F(function, "function")                                            \
-  F(get_space, "get ")                                               \
-  F(length, "length")                                                \
-  F(let, "let")                                                      \
-  F(name, "name")                                                    \
-  F(native, "native")                                                \
-  F(new_target, ".new.target")                                       \
-  F(next, "next")                                                    \
-  F(number, "number")                                                \
-  F(object, "object")                                                \
-  F(proto, "__proto__")                                              \
-  F(prototype, "prototype")                                          \
-  F(return, "return")                                                \
-  F(set_space, "set ")                                               \
-  F(star_default_star, "*default*")                                  \
-  F(string, "string")                                                \
-  F(symbol, "symbol")                                                \
-  F(this, "this")                                                    \
-  F(this_function, ".this_function")                                 \
-  F(throw, "throw")                                                  \
-  F(undefined, "undefined")                                          \
-  F(use_asm, "use asm")                                              \
-  F(use_strict, "use strict")                                        \
+#define AST_STRING_CONSTANTS(F)                 \
+  F(anonymous, "anonymous")                     \
+  F(anonymous_function, "(anonymous function)") \
+  F(arguments, "arguments")                     \
+  F(as, "as")                                   \
+  F(assert, "assert")                           \
+  F(async, "async")                             \
+  F(await, "await")                             \
+  F(bigint, "bigint")                           \
+  F(boolean, "boolean")                         \
+  F(computed, "<computed>")                     \
+  F(dot_brand, ".brand")                        \
+  F(constructor, "constructor")                 \
+  F(default, "default")                         \
+  F(done, "done")                               \
+  F(dot, ".")                                   \
+  F(dot_default, ".default")                    \
+  F(dot_for, ".for")                            \
+  F(dot_generator_object, ".generator_object")  \
+  F(dot_result, ".result")                      \
+  F(dot_repl_result, ".repl_result")            \
+  F(dot_switch_tag, ".switch_tag")              \
+  F(dot_catch, ".catch")                        \
+  F(empty, "")                                  \
+  F(eval, "eval")                               \
+  F(from, "from")                               \
+  F(function, "function")                       \
+  F(get, "get")                                 \
+  F(get_space, "get ")                          \
+  F(length, "length")                           \
+  F(let, "let")                                 \
+  F(meta, "meta")                               \
+  F(name, "name")                               \
+  F(native, "native")                           \
+  F(new_target, ".new.target")                  \
+  F(next, "next")                               \
+  F(number, "number")                           \
+  F(object, "object")                           \
+  F(of, "of")                                   \
+  F(private_constructor, "#constructor")        \
+  F(proto, "__proto__")                         \
+  F(prototype, "prototype")                     \
+  F(return, "return")                           \
+  F(set, "set")                                 \
+  F(set_space, "set ")                          \
+  F(string, "string")                           \
+  F(symbol, "symbol")                           \
+  F(target, "target")                           \
+  F(this, "this")                               \
+  F(this_function, ".this_function")            \
+  F(throw, "throw")                             \
+  F(undefined, "undefined")                     \
   F(value, "value")
 
 class AstStringConstants final {
@@ -248,13 +284,11 @@ class AstStringConstants final {
 #undef F
 
   uint64_t hash_seed() const { return hash_seed_; }
-  const base::CustomMatcherHashMap* string_table() const {
-    return &string_table_;
-  }
+  const AstRawStringMap* string_table() const { return &string_table_; }
 
  private:
   Zone zone_;
-  base::CustomMatcherHashMap string_table_;
+  AstRawStringMap string_table_;
   uint64_t hash_seed_;
 
 #define F(name, str) AstRawString* name##_string_;
@@ -271,12 +305,11 @@ class AstValueFactory {
       : string_table_(string_constants->string_table()),
         strings_(nullptr),
         strings_end_(&strings_),
-        cons_strings_(nullptr),
-        cons_strings_end_(&cons_strings_),
         string_constants_(string_constants),
         empty_cons_string_(nullptr),
         zone_(zone),
         hash_seed_(hash_seed) {
+    DCHECK_NOT_NULL(zone_);
     DCHECK_EQ(hash_seed, string_constants->hash_seed());
     std::fill(one_character_strings_,
               one_character_strings_ + arraysize(one_character_strings_),
@@ -284,25 +317,36 @@ class AstValueFactory {
     empty_cons_string_ = NewConsString();
   }
 
-  Zone* zone() const { return zone_; }
+  Zone* zone() const {
+    DCHECK_NOT_NULL(zone_);
+    return zone_;
+  }
 
   const AstRawString* GetOneByteString(Vector<const uint8_t> literal) {
     return GetOneByteStringInternal(literal);
   }
   const AstRawString* GetOneByteString(const char* string) {
-    return GetOneByteString(Vector<const uint8_t>(
-        reinterpret_cast<const uint8_t*>(string), StrLength(string)));
+    return GetOneByteString(OneByteVector(string));
   }
   const AstRawString* GetTwoByteString(Vector<const uint16_t> literal) {
     return GetTwoByteStringInternal(literal);
   }
   const AstRawString* GetString(Handle<String> literal);
-  V8_EXPORT_PRIVATE AstConsString* NewConsString();
-  AstConsString* NewConsString(const AstRawString* str);
-  AstConsString* NewConsString(const AstRawString* str1,
-                               const AstRawString* str2);
 
-  V8_EXPORT_PRIVATE void Internalize(Isolate* isolate);
+  // Clones an AstRawString from another ast value factory, adding it to this
+  // factory and returning the clone.
+  const AstRawString* CloneFromOtherFactory(const AstRawString* raw_string);
+
+  V8_EXPORT_PRIVATE AstConsString* NewConsString();
+  V8_EXPORT_PRIVATE AstConsString* NewConsString(const AstRawString* str);
+  V8_EXPORT_PRIVATE AstConsString* NewConsString(const AstRawString* str1,
+                                                 const AstRawString* str2);
+
+  // Internalize all the strings in the factory, and prevent any more from being
+  // allocated. Multiple calls to Internalize are allowed, for simplicity, where
+  // subsequent calls are a no-op.
+  template <typename LocalIsolate>
+  void Internalize(LocalIsolate* isolate);
 
 #define F(name, str)                           \
   const AstRawString* name##_string() const {  \
@@ -310,7 +354,7 @@ class AstValueFactory {
   }
   AST_STRING_CONSTANTS(F)
 #undef F
-  const AstConsString* empty_cons_string() const { return empty_cons_string_; }
+  AstConsString* empty_cons_string() const { return empty_cons_string_; }
 
  private:
   AstRawString* AddString(AstRawString* string) {
@@ -318,44 +362,44 @@ class AstValueFactory {
     strings_end_ = string->next_location();
     return string;
   }
-  AstConsString* AddConsString(AstConsString* string) {
-    *cons_strings_end_ = string;
-    cons_strings_end_ = string->next_location();
-    return string;
-  }
   void ResetStrings() {
     strings_ = nullptr;
     strings_end_ = &strings_;
-    cons_strings_ = nullptr;
-    cons_strings_end_ = &cons_strings_;
   }
-  V8_EXPORT_PRIVATE AstRawString* GetOneByteStringInternal(
+  V8_EXPORT_PRIVATE const AstRawString* GetOneByteStringInternal(
       Vector<const uint8_t> literal);
-  AstRawString* GetTwoByteStringInternal(Vector<const uint16_t> literal);
-  AstRawString* GetString(uint32_t hash, bool is_one_byte,
-                          Vector<const byte> literal_bytes);
+  const AstRawString* GetTwoByteStringInternal(Vector<const uint16_t> literal);
+  const AstRawString* GetString(uint32_t hash, bool is_one_byte,
+                                Vector<const byte> literal_bytes);
 
-  // All strings are copied here, one after another (no zeroes inbetween).
-  base::CustomMatcherHashMap string_table_;
+  // All strings are copied here.
+  AstRawStringMap string_table_;
 
-  // We need to keep track of strings_ in order since cons strings require their
-  // members to be internalized first.
   AstRawString* strings_;
   AstRawString** strings_end_;
-  AstConsString* cons_strings_;
-  AstConsString** cons_strings_end_;
 
   // Holds constant string values which are shared across the isolate.
   const AstStringConstants* string_constants_;
-  const AstConsString* empty_cons_string_;
+
+  AstConsString* empty_cons_string_;
 
   // Caches one character lowercase strings (for minified code).
-  AstRawString* one_character_strings_[26];
+  static const int kMaxOneCharStringValue = 128;
+  const AstRawString* one_character_strings_[kMaxOneCharStringValue];
 
   Zone* zone_;
 
   uint64_t hash_seed_;
 };
+
+extern template EXPORT_TEMPLATE_DECLARE(
+    V8_EXPORT_PRIVATE) void AstValueFactory::Internalize<Isolate>(Isolate*
+                                                                      isolate);
+
+extern template EXPORT_TEMPLATE_DECLARE(
+    V8_EXPORT_PRIVATE) void AstValueFactory::
+    Internalize<LocalIsolate>(LocalIsolate* isolate);
+
 }  // namespace internal
 }  // namespace v8
 

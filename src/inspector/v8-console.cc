@@ -63,6 +63,7 @@ class ConsoleHelper {
   void reportCall(ConsoleAPIType type) {
     if (!m_info.Length()) return;
     std::vector<v8::Local<v8::Value>> arguments;
+    arguments.reserve(m_info.Length());
     for (int i = 0; i < m_info.Length(); ++i) arguments.push_back(m_info[i]);
     reportCall(type, arguments);
   }
@@ -72,6 +73,14 @@ class ConsoleHelper {
     std::vector<v8::Local<v8::Value>> arguments;
     for (int i = 0; i < m_info.Length(); ++i) arguments.push_back(m_info[i]);
     if (!m_info.Length()) arguments.push_back(toV8String(m_isolate, message));
+    reportCall(type, arguments);
+  }
+
+  void reportCallAndReplaceFirstArgument(ConsoleAPIType type,
+                                         const String16& message) {
+    std::vector<v8::Local<v8::Value>> arguments;
+    arguments.push_back(toV8String(m_isolate, message));
+    for (int i = 1; i < m_info.Length(); ++i) arguments.push_back(m_info[i]);
     reportCall(type, arguments);
   }
 
@@ -106,7 +115,7 @@ class ConsoleHelper {
   bool firstArgToBoolean(bool defaultValue) {
     if (m_info.Length() < 1) return defaultValue;
     if (m_info[0]->IsBoolean()) return m_info[0].As<v8::Boolean>()->Value();
-    return m_info[0]->BooleanValue(m_context).FromMaybe(defaultValue);
+    return m_info[0]->BooleanValue(m_context->GetIsolate());
   }
 
   String16 firstArgToString(const String16& defaultValue,
@@ -115,15 +124,8 @@ class ConsoleHelper {
       return defaultValue;
     }
     v8::Local<v8::String> titleValue;
-    v8::TryCatch tryCatch(m_context->GetIsolate());
-    if (m_info[0]->IsObject()) {
-      if (!m_info[0].As<v8::Object>()->ObjectProtoToString(m_context).ToLocal(
-              &titleValue))
-        return defaultValue;
-    } else {
-      if (!m_info[0]->ToString(m_context).ToLocal(&titleValue))
-        return defaultValue;
-    }
+    if (!m_info[0]->ToString(m_context).ToLocal(&titleValue))
+      return defaultValue;
     return toProtocolString(m_context->GetIsolate(), titleValue);
   }
 
@@ -143,7 +145,7 @@ class ConsoleHelper {
   }
 
   void forEachSession(std::function<void(V8InspectorSessionImpl*)> callback) {
-    m_inspector->forEachSession(m_groupId, callback);
+    m_inspector->forEachSession(m_groupId, std::move(callback));
   }
 
  private:
@@ -385,10 +387,9 @@ static void timeFunction(const v8::debug::ConsoleCallArguments& info,
 
 static void timeEndFunction(const v8::debug::ConsoleCallArguments& info,
                             const v8::debug::ConsoleContext& consoleContext,
-                            bool timelinePrefix, V8InspectorImpl* inspector) {
+                            bool timeLog, V8InspectorImpl* inspector) {
   ConsoleHelper helper(info, consoleContext, inspector);
   String16 protocolTitle = helper.firstArgToString("default", false);
-  if (timelinePrefix) protocolTitle = "Timeline '" + protocolTitle + "'";
   const String16& timerId =
       protocolTitle + "@" +
       consoleContextToString(inspector->isolate(), consoleContext);
@@ -399,18 +400,32 @@ static void timeEndFunction(const v8::debug::ConsoleCallArguments& info,
     return;
   }
   inspector->client()->consoleTimeEnd(toStringView(protocolTitle));
-  double elapsed = helper.consoleMessageStorage()->timeEnd(
-      helper.contextId(),
-      protocolTitle + "@" +
-          consoleContextToString(inspector->isolate(), consoleContext));
+  String16 title = protocolTitle + "@" +
+                   consoleContextToString(inspector->isolate(), consoleContext);
+  double elapsed;
+  if (timeLog) {
+    elapsed =
+        helper.consoleMessageStorage()->timeLog(helper.contextId(), title);
+  } else {
+    elapsed =
+        helper.consoleMessageStorage()->timeEnd(helper.contextId(), title);
+  }
   String16 message =
-      protocolTitle + ": " + String16::fromDouble(elapsed) + "ms";
-  helper.reportCallWithArgument(ConsoleAPIType::kTimeEnd, message);
+      protocolTitle + ": " + String16::fromDouble(elapsed) + " ms";
+  if (timeLog)
+    helper.reportCallAndReplaceFirstArgument(ConsoleAPIType::kLog, message);
+  else
+    helper.reportCallWithArgument(ConsoleAPIType::kTimeEnd, message);
 }
 
 void V8Console::Time(const v8::debug::ConsoleCallArguments& info,
                      const v8::debug::ConsoleContext& consoleContext) {
   timeFunction(info, consoleContext, false, m_inspector);
+}
+
+void V8Console::TimeLog(const v8::debug::ConsoleCallArguments& info,
+                        const v8::debug::ConsoleContext& consoleContext) {
+  timeEndFunction(info, consoleContext, true, m_inspector);
 }
 
 void V8Console::TimeEnd(const v8::debug::ConsoleCallArguments& info,
@@ -481,11 +496,11 @@ void V8Console::valuesCallback(const v8::FunctionCallbackInfo<v8::Value>& info,
   info.GetReturnValue().Set(values);
 }
 
-static void setFunctionBreakpoint(ConsoleHelper& helper, int sessionId,
-                                  v8::Local<v8::Function> function,
-                                  V8DebuggerAgentImpl::BreakpointSource source,
-                                  v8::Local<v8::String> condition,
-                                  bool enable) {
+static void setFunctionBreakpoint(
+    ConsoleHelper& helper,  // NOLINT(runtime/references)
+    int sessionId, v8::Local<v8::Function> function,
+    V8DebuggerAgentImpl::BreakpointSource source,
+    v8::Local<v8::String> condition, bool enable) {
   V8InspectorSessionImpl* session = helper.session(sessionId);
   if (session == nullptr) return;
   if (!session->debuggerAgent()->enabled()) return;
@@ -578,10 +593,9 @@ static void inspectImpl(const v8::FunctionCallbackInfo<v8::Value>& info,
   InjectedScript* injectedScript = helper.injectedScript(sessionId);
   if (!injectedScript) return;
   std::unique_ptr<protocol::Runtime::RemoteObject> wrappedObject;
-  protocol::Response response =
-      injectedScript->wrapObject(value, "", false /** forceValueType */,
-                                 false /** generatePreview */, &wrappedObject);
-  if (!response.isSuccess()) return;
+  protocol::Response response = injectedScript->wrapObject(
+      value, "", WrapMode::kNoPreview, &wrappedObject);
+  if (!response.IsSuccess()) return;
 
   std::unique_ptr<protocol::DictionaryValue> hints =
       protocol::DictionaryValue::create();
@@ -677,7 +691,7 @@ v8::Local<v8::Object> V8Console::createCommandLineAPI(
 
   v8::Local<v8::ArrayBuffer> data =
       v8::ArrayBuffer::New(isolate, sizeof(CommandLineAPIData));
-  *static_cast<CommandLineAPIData*>(data->GetContents().Data()) =
+  *static_cast<CommandLineAPIData*>(data->GetBackingStore()->Data()) =
       CommandLineAPIData(this, sessionId);
   createBoundFunctionProperty(context, commandLineAPI, data, "dir",
                               &V8Console::call<&V8Console::Dir>,
@@ -769,15 +783,11 @@ static bool isCommandLineAPIGetter(const String16& name) {
 
 void V8Console::CommandLineAPIScope::accessorGetterCallback(
     v8::Local<v8::Name> name, const v8::PropertyCallbackInfo<v8::Value>& info) {
-  CommandLineAPIScope* scope = static_cast<CommandLineAPIScope*>(
-      info.Data().As<v8::External>()->Value());
-  DCHECK(scope);
-
+  CommandLineAPIScope* scope = *static_cast<CommandLineAPIScope**>(
+      info.Data().As<v8::ArrayBuffer>()->GetBackingStore()->Data());
   v8::Local<v8::Context> context = info.GetIsolate()->GetCurrentContext();
-  if (scope->m_cleanup) {
-    bool removed = info.Holder()->Delete(context, name).FromMaybe(false);
-    DCHECK(removed);
-    USE(removed);
+  if (scope == nullptr) {
+    USE(info.Holder()->Delete(context, name).FromMaybe(false));
     return;
   }
   v8::Local<v8::Object> commandLineAPI = scope->m_commandLineAPI;
@@ -801,16 +811,14 @@ void V8Console::CommandLineAPIScope::accessorGetterCallback(
 void V8Console::CommandLineAPIScope::accessorSetterCallback(
     v8::Local<v8::Name> name, v8::Local<v8::Value> value,
     const v8::PropertyCallbackInfo<void>& info) {
-  CommandLineAPIScope* scope = static_cast<CommandLineAPIScope*>(
-      info.Data().As<v8::External>()->Value());
+  CommandLineAPIScope* scope = *static_cast<CommandLineAPIScope**>(
+      info.Data().As<v8::ArrayBuffer>()->GetBackingStore()->Data());
+  if (scope == nullptr) return;
   v8::Local<v8::Context> context = info.GetIsolate()->GetCurrentContext();
   if (!info.Holder()->Delete(context, name).FromMaybe(false)) return;
   if (!info.Holder()->CreateDataProperty(context, name, value).FromMaybe(false))
     return;
-  bool removed =
-      scope->m_installedMethods->Delete(context, name).FromMaybe(false);
-  DCHECK(removed);
-  USE(removed);
+  USE(scope->m_installedMethods->Delete(context, name).FromMaybe(false));
 }
 
 V8Console::CommandLineAPIScope::CommandLineAPIScope(
@@ -819,14 +827,15 @@ V8Console::CommandLineAPIScope::CommandLineAPIScope(
     : m_context(context),
       m_commandLineAPI(commandLineAPI),
       m_global(global),
-      m_installedMethods(v8::Set::New(context->GetIsolate())),
-      m_cleanup(false) {
+      m_installedMethods(v8::Set::New(context->GetIsolate())) {
   v8::MicrotasksScope microtasksScope(context->GetIsolate(),
                                       v8::MicrotasksScope::kDoNotRunMicrotasks);
   v8::Local<v8::Array> names;
   if (!m_commandLineAPI->GetOwnPropertyNames(context).ToLocal(&names)) return;
-  v8::Local<v8::External> externalThis =
-      v8::External::New(context->GetIsolate(), this);
+  m_thisReference =
+      v8::ArrayBuffer::New(context->GetIsolate(), sizeof(CommandLineAPIScope*));
+  *static_cast<CommandLineAPIScope**>(
+      m_thisReference->GetBackingStore()->Data()) = this;
   for (uint32_t i = 0; i < names->Length(); ++i) {
     v8::Local<v8::Value> name;
     if (!names->Get(context, i).ToLocal(&name) || !name->IsName()) continue;
@@ -837,7 +846,7 @@ V8Console::CommandLineAPIScope::CommandLineAPIScope(
              ->SetAccessor(context, v8::Local<v8::Name>::Cast(name),
                            CommandLineAPIScope::accessorGetterCallback,
                            CommandLineAPIScope::accessorSetterCallback,
-                           externalThis, v8::DEFAULT, v8::DontEnum,
+                           m_thisReference, v8::DEFAULT, v8::DontEnum,
                            v8::SideEffectType::kHasNoSideEffect)
              .FromMaybe(false)) {
       bool removed = m_installedMethods->Delete(context, name).FromMaybe(false);
@@ -851,7 +860,8 @@ V8Console::CommandLineAPIScope::CommandLineAPIScope(
 V8Console::CommandLineAPIScope::~CommandLineAPIScope() {
   v8::MicrotasksScope microtasksScope(m_context->GetIsolate(),
                                       v8::MicrotasksScope::kDoNotRunMicrotasks);
-  m_cleanup = true;
+  *static_cast<CommandLineAPIScope**>(
+      m_thisReference->GetBackingStore()->Data()) = nullptr;
   v8::Local<v8::Array> names = m_installedMethods->AsArray();
   for (uint32_t i = 0; i < names->Length(); ++i) {
     v8::Local<v8::Value> name;
@@ -862,7 +872,6 @@ V8Console::CommandLineAPIScope::~CommandLineAPIScope() {
                          ->GetOwnPropertyDescriptor(
                              m_context, v8::Local<v8::String>::Cast(name))
                          .ToLocal(&descriptor);
-      DCHECK(success);
       USE(success);
     }
   }

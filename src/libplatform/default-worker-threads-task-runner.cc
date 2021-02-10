@@ -4,26 +4,27 @@
 
 #include "src/libplatform/default-worker-threads-task-runner.h"
 
-#include "src/base/platform/mutex.h"
-#include "src/libplatform/worker-thread.h"
+#include "src/libplatform/delayed-task-queue.h"
 
 namespace v8 {
 namespace platform {
 
 DefaultWorkerThreadsTaskRunner::DefaultWorkerThreadsTaskRunner(
-    uint32_t thread_pool_size) {
+    uint32_t thread_pool_size, TimeFunction time_function)
+    : queue_(time_function), time_function_(time_function) {
   for (uint32_t i = 0; i < thread_pool_size; ++i) {
-    thread_pool_.push_back(base::make_unique<WorkerThread>(&queue_));
+    thread_pool_.push_back(std::make_unique<WorkerThread>(this));
   }
 }
 
-DefaultWorkerThreadsTaskRunner::~DefaultWorkerThreadsTaskRunner() {
-  // This destructor is needed because we have unique_ptr to the WorkerThreads,
-  // und the {WorkerThread} class is forward declared in the header file.
+DefaultWorkerThreadsTaskRunner::~DefaultWorkerThreadsTaskRunner() = default;
+
+double DefaultWorkerThreadsTaskRunner::MonotonicallyIncreasingTime() {
+  return time_function_();
 }
 
 void DefaultWorkerThreadsTaskRunner::Terminate() {
-  base::LockGuard<base::Mutex> guard(&lock_);
+  base::MutexGuard guard(&lock_);
   terminated_ = true;
   queue_.Terminate();
   // Clearing the thread pool lets all worker threads join.
@@ -31,22 +32,16 @@ void DefaultWorkerThreadsTaskRunner::Terminate() {
 }
 
 void DefaultWorkerThreadsTaskRunner::PostTask(std::unique_ptr<Task> task) {
-  base::LockGuard<base::Mutex> guard(&lock_);
+  base::MutexGuard guard(&lock_);
   if (terminated_) return;
   queue_.Append(std::move(task));
 }
 
 void DefaultWorkerThreadsTaskRunner::PostDelayedTask(std::unique_ptr<Task> task,
                                                      double delay_in_seconds) {
-  base::LockGuard<base::Mutex> guard(&lock_);
+  base::MutexGuard guard(&lock_);
   if (terminated_) return;
-  if (delay_in_seconds == 0) {
-    queue_.Append(std::move(task));
-    return;
-  }
-  // There is no use case for this function with non zero delay_in_second on a
-  // worker thread at the moment, but it is still part of the interface.
-  UNIMPLEMENTED();
+  queue_.AppendDelayed(std::move(task), delay_in_seconds);
 }
 
 void DefaultWorkerThreadsTaskRunner::PostIdleTask(
@@ -58,6 +53,25 @@ void DefaultWorkerThreadsTaskRunner::PostIdleTask(
 bool DefaultWorkerThreadsTaskRunner::IdleTasksEnabled() {
   // There are no idle worker tasks.
   return false;
+}
+
+std::unique_ptr<Task> DefaultWorkerThreadsTaskRunner::GetNext() {
+  return queue_.GetNext();
+}
+
+DefaultWorkerThreadsTaskRunner::WorkerThread::WorkerThread(
+    DefaultWorkerThreadsTaskRunner* runner)
+    : Thread(Options("V8 DefaultWorkerThreadsTaskRunner WorkerThread")),
+      runner_(runner) {
+  CHECK(Start());
+}
+
+DefaultWorkerThreadsTaskRunner::WorkerThread::~WorkerThread() { Join(); }
+
+void DefaultWorkerThreadsTaskRunner::WorkerThread::Run() {
+  while (std::unique_ptr<Task> task = runner_->GetNext()) {
+    task->Run();
+  }
 }
 
 }  // namespace platform

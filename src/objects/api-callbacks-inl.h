@@ -7,7 +7,10 @@
 
 #include "src/objects/api-callbacks.h"
 
-#include "src/heap/heap-inl.h"
+#include "src/heap/heap-write-barrier-inl.h"
+#include "src/heap/heap-write-barrier.h"
+#include "src/objects/foreign-inl.h"
+#include "src/objects/js-objects-inl.h"
 #include "src/objects/name.h"
 #include "src/objects/templates.h"
 
@@ -17,36 +20,32 @@
 namespace v8 {
 namespace internal {
 
-CAST_ACCESSOR(AccessorInfo)
-CAST_ACCESSOR(AccessCheckInfo)
-CAST_ACCESSOR(InterceptorInfo)
-CAST_ACCESSOR(CallHandlerInfo)
+#include "torque-generated/src/objects/api-callbacks-tq-inl.inc"
 
-ACCESSORS(AccessorInfo, name, Name, kNameOffset)
-SMI_ACCESSORS(AccessorInfo, flags, kFlagsOffset)
-ACCESSORS(AccessorInfo, expected_receiver_type, Object,
-          kExpectedReceiverTypeOffset)
+TQ_OBJECT_CONSTRUCTORS_IMPL(AccessCheckInfo)
+TQ_OBJECT_CONSTRUCTORS_IMPL(AccessorInfo)
+TQ_OBJECT_CONSTRUCTORS_IMPL(InterceptorInfo)
+
+TQ_OBJECT_CONSTRUCTORS_IMPL(CallHandlerInfo)
 
 ACCESSORS_CHECKED2(AccessorInfo, getter, Object, kGetterOffset, true,
                    Foreign::IsNormalized(value))
 ACCESSORS_CHECKED2(AccessorInfo, setter, Object, kSetterOffset, true,
-                   Foreign::IsNormalized(value));
-ACCESSORS(AccessorInfo, js_getter, Object, kJsGetterOffset)
-ACCESSORS(AccessorInfo, data, Object, kDataOffset)
+                   Foreign::IsNormalized(value))
 
 bool AccessorInfo::has_getter() {
-  bool result = getter() != Smi::kZero;
+  bool result = getter() != Smi::zero();
   DCHECK_EQ(result,
-            getter() != Smi::kZero &&
-                Foreign::cast(getter())->foreign_address() != kNullAddress);
+            getter() != Smi::zero() &&
+                Foreign::cast(getter()).foreign_address() != kNullAddress);
   return result;
 }
 
 bool AccessorInfo::has_setter() {
-  bool result = setter() != Smi::kZero;
+  bool result = setter() != Smi::zero();
   DCHECK_EQ(result,
-            setter() != Smi::kZero &&
-                Foreign::cast(setter())->foreign_address() != kNullAddress);
+            setter() != Smi::zero() &&
+                Foreign::cast(setter()).foreign_address() != kNullAddress);
   return result;
 }
 
@@ -59,47 +58,43 @@ BIT_FIELD_ACCESSORS(AccessorInfo, flags, is_special_data_property,
 BIT_FIELD_ACCESSORS(AccessorInfo, flags, replace_on_access,
                     AccessorInfo::ReplaceOnAccessBit)
 BIT_FIELD_ACCESSORS(AccessorInfo, flags, is_sloppy, AccessorInfo::IsSloppyBit)
-BIT_FIELD_ACCESSORS(AccessorInfo, flags, has_no_side_effect,
-                    AccessorInfo::HasNoSideEffectBit)
+BIT_FIELD_ACCESSORS(AccessorInfo, flags, getter_side_effect_type,
+                    AccessorInfo::GetterSideEffectTypeBits)
+
+SideEffectType AccessorInfo::setter_side_effect_type() const {
+  return SetterSideEffectTypeBits::decode(flags());
+}
+
+void AccessorInfo::set_setter_side_effect_type(SideEffectType value) {
+  // We do not support describing setters as having no side effect, since
+  // calling set accessors must go through a store bytecode. Store bytecodes
+  // support checking receivers for temporary objects, but still expect
+  // the receiver to be written to.
+  CHECK_NE(value, SideEffectType::kHasNoSideEffect);
+  set_flags(SetterSideEffectTypeBits::update(flags(), value));
+}
+
 BIT_FIELD_ACCESSORS(AccessorInfo, flags, initial_property_attributes,
                     AccessorInfo::InitialAttributesBits)
 
-bool AccessorInfo::IsCompatibleReceiver(Object* receiver) {
+bool AccessorInfo::IsCompatibleReceiver(Object receiver) {
   if (!HasExpectedReceiverType()) return true;
-  if (!receiver->IsJSObject()) return false;
+  if (!receiver.IsJSObject()) return false;
   return FunctionTemplateInfo::cast(expected_receiver_type())
-      ->IsTemplateFor(JSObject::cast(receiver)->map());
+      .IsTemplateFor(JSObject::cast(receiver).map());
 }
 
 bool AccessorInfo::HasExpectedReceiverType() {
-  return expected_receiver_type()->IsFunctionTemplateInfo();
+  return expected_receiver_type().IsFunctionTemplateInfo();
 }
 
-ACCESSORS(AccessCheckInfo, callback, Object, kCallbackOffset)
-ACCESSORS(AccessCheckInfo, named_interceptor, Object, kNamedInterceptorOffset)
-ACCESSORS(AccessCheckInfo, indexed_interceptor, Object,
-          kIndexedInterceptorOffset)
-ACCESSORS(AccessCheckInfo, data, Object, kDataOffset)
-
-ACCESSORS(InterceptorInfo, getter, Object, kGetterOffset)
-ACCESSORS(InterceptorInfo, setter, Object, kSetterOffset)
-ACCESSORS(InterceptorInfo, query, Object, kQueryOffset)
-ACCESSORS(InterceptorInfo, descriptor, Object, kDescriptorOffset)
-ACCESSORS(InterceptorInfo, deleter, Object, kDeleterOffset)
-ACCESSORS(InterceptorInfo, enumerator, Object, kEnumeratorOffset)
-ACCESSORS(InterceptorInfo, definer, Object, kDefinerOffset)
-ACCESSORS(InterceptorInfo, data, Object, kDataOffset)
-SMI_ACCESSORS(InterceptorInfo, flags, kFlagsOffset)
 BOOL_ACCESSORS(InterceptorInfo, flags, can_intercept_symbols,
-               kCanInterceptSymbolsBit)
-BOOL_ACCESSORS(InterceptorInfo, flags, all_can_read, kAllCanReadBit)
-BOOL_ACCESSORS(InterceptorInfo, flags, non_masking, kNonMasking)
-BOOL_ACCESSORS(InterceptorInfo, flags, is_named, kNamed)
-BOOL_ACCESSORS(InterceptorInfo, flags, has_no_side_effect, kHasNoSideEffect)
-
-ACCESSORS(CallHandlerInfo, callback, Object, kCallbackOffset)
-ACCESSORS(CallHandlerInfo, js_callback, Object, kJsCallbackOffset)
-ACCESSORS(CallHandlerInfo, data, Object, kDataOffset)
+               CanInterceptSymbolsBit::kShift)
+BOOL_ACCESSORS(InterceptorInfo, flags, all_can_read, AllCanReadBit::kShift)
+BOOL_ACCESSORS(InterceptorInfo, flags, non_masking, NonMaskingBit::kShift)
+BOOL_ACCESSORS(InterceptorInfo, flags, is_named, NamedBit::kShift)
+BOOL_ACCESSORS(InterceptorInfo, flags, has_no_side_effect,
+               HasNoSideEffectBit::kShift)
 
 bool CallHandlerInfo::IsSideEffectFreeCallHandlerInfo() const {
   ReadOnlyRoots roots = GetReadOnlyRoots();
