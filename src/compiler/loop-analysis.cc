@@ -4,6 +4,7 @@
 
 #include "src/compiler/loop-analysis.h"
 
+#include "src/codegen/tick-counter.h"
 #include "src/compiler/graph.h"
 #include "src/compiler/node-marker.h"
 #include "src/compiler/node-properties.h"
@@ -12,9 +13,12 @@
 
 namespace v8 {
 namespace internal {
+
+class TickCounter;
+
 namespace compiler {
 
-#define OFFSET(x) ((x)&0x1f)
+#define OFFSET(x) ((x)&0x1F)
 #define BIT(x) (1u << OFFSET(x))
 #define INDEX(x) ((x) >> 5)
 
@@ -26,7 +30,7 @@ struct NodeInfo {
 
 
 // Temporary loop info needed during traversal and building the loop tree.
-struct LoopInfo {
+struct TempLoopInfo {
   Node* header;
   NodeInfo* header_list;
   NodeInfo* exit_list;
@@ -51,7 +55,8 @@ struct LoopInfo {
 // marks on edges into/out-of the loop header nodes.
 class LoopFinderImpl {
  public:
-  LoopFinderImpl(Graph* graph, LoopTree* loop_tree, Zone* zone)
+  LoopFinderImpl(Graph* graph, LoopTree* loop_tree, TickCounter* tick_counter,
+                 Zone* zone)
       : zone_(zone),
         end_(graph->end()),
         queue_(zone),
@@ -63,7 +68,8 @@ class LoopFinderImpl {
         loops_found_(0),
         width_(0),
         backward_(nullptr),
-        forward_(nullptr) {}
+        forward_(nullptr),
+        tick_counter_(tick_counter) {}
 
   void Run() {
     PropagateBackward();
@@ -93,7 +99,7 @@ class LoopFinderImpl {
     }
 
     int i = 0;
-    for (LoopInfo& li : loops_) {
+    for (TempLoopInfo& li : loops_) {
       PrintF("Loop %d headed at #%d\n", i, li.header->id());
       i++;
     }
@@ -109,13 +115,14 @@ class LoopFinderImpl {
   NodeDeque queue_;
   NodeMarker<bool> queued_;
   ZoneVector<NodeInfo> info_;
-  ZoneVector<LoopInfo> loops_;
+  ZoneVector<TempLoopInfo> loops_;
   ZoneVector<int> loop_num_;
   LoopTree* loop_tree_;
   int loops_found_;
   int width_;
   uint32_t* backward_;
   uint32_t* forward_;
+  TickCounter* const tick_counter_;
 
   int num_nodes() {
     return static_cast<int>(loop_tree_->node_to_loop_num_.size());
@@ -183,6 +190,7 @@ class LoopFinderImpl {
     Queue(end_);
 
     while (!queue_.empty()) {
+      tick_counter_->TickAndMaybeEnterSafepoint();
       Node* node = queue_.front();
       info(node);
       queue_.pop_front();
@@ -295,12 +303,13 @@ class LoopFinderImpl {
   // Propagate marks forward from loops.
   void PropagateForward() {
     ResizeForwardMarks();
-    for (LoopInfo& li : loops_) {
+    for (TempLoopInfo& li : loops_) {
       SetForwardMark(li.header, LoopNum(li.header));
       Queue(li.header);
     }
     // Propagate forward on paths that were backward reachable from backedges.
     while (!queue_.empty()) {
+      tick_counter_->TickAndMaybeEnterSafepoint();
       Node* node = queue_.front();
       queue_.pop_front();
       queued_.Set(node, false);
@@ -350,7 +359,7 @@ class LoopFinderImpl {
     }
   }
 
-  void AddNodeToLoop(NodeInfo* node_info, LoopInfo* loop, int loop_num) {
+  void AddNodeToLoop(NodeInfo* node_info, TempLoopInfo* loop, int loop_num) {
     if (LoopNum(node_info->node) == loop_num) {
       if (IsLoopHeaderNode(node_info->node)) {
         node_info->next = loop->header_list;
@@ -381,17 +390,18 @@ class LoopFinderImpl {
     for (NodeInfo& ni : info_) {
       if (ni.node == nullptr) continue;
 
-      LoopInfo* innermost = nullptr;
+      TempLoopInfo* innermost = nullptr;
       int innermost_index = 0;
       int pos = ni.node->id() * width_;
       // Search the marks word by word.
       for (int i = 0; i < width_; i++) {
         uint32_t marks = backward_[pos + i] & forward_[pos + i];
+
         for (int j = 0; j < 32; j++) {
           if (marks & (1u << j)) {
             int loop_num = i * 32 + j;
             if (loop_num == 0) continue;
-            LoopInfo* loop = &loops_[loop_num - 1];
+            TempLoopInfo* loop = &loops_[loop_num - 1];
             if (innermost == nullptr ||
                 loop->loop->depth_ > innermost->loop->depth_) {
               innermost = loop;
@@ -401,6 +411,10 @@ class LoopFinderImpl {
         }
       }
       if (innermost == nullptr) continue;
+
+      // Return statements should never be found by forward or backward walk.
+      CHECK(ni.node->opcode() != IrOpcode::kReturn);
+
       AddNodeToLoop(&ni, innermost, innermost_index);
       count++;
     }
@@ -415,12 +429,16 @@ class LoopFinderImpl {
   // Handle the simpler case of a single loop (no checks for nesting necessary).
   void FinishSingleLoop() {
     // Place nodes into the loop header and body.
-    LoopInfo* li = &loops_[0];
+    TempLoopInfo* li = &loops_[0];
     li->loop = &loop_tree_->all_loops_[0];
     loop_tree_->SetParent(nullptr, li->loop);
     size_t count = 0;
     for (NodeInfo& ni : info_) {
       if (ni.node == nullptr || !IsInLoop(ni.node, 1)) continue;
+
+      // Return statements should never be found by forward or backward walk.
+      CHECK(ni.node->opcode() != IrOpcode::kReturn);
+
       AddNodeToLoop(&ni, li, 1);
       count++;
     }
@@ -434,7 +452,7 @@ class LoopFinderImpl {
   // so that nested loops occupy nested intervals.
   void SerializeLoop(LoopTree::Loop* loop) {
     int loop_num = loop_tree_->LoopNum(loop);
-    LoopInfo& li = loops_[loop_num - 1];
+    TempLoopInfo& li = loops_[loop_num - 1];
 
     // Serialize the header.
     loop->header_start_ = static_cast<int>(loop_tree_->loop_nodes_.size());
@@ -465,7 +483,7 @@ class LoopFinderImpl {
 
   // Connect the LoopTree loops to their parents recursively.
   LoopTree::Loop* ConnectLoopTree(int loop_num) {
-    LoopInfo& li = loops_[loop_num - 1];
+    TempLoopInfo& li = loops_[loop_num - 1];
     if (li.loop != nullptr) return li.loop;
 
     NodeInfo& ni = info(li.header);
@@ -503,18 +521,17 @@ class LoopFinderImpl {
   }
 };
 
-
-LoopTree* LoopFinder::BuildLoopTree(Graph* graph, Zone* zone) {
+LoopTree* LoopFinder::BuildLoopTree(Graph* graph, TickCounter* tick_counter,
+                                    Zone* zone) {
   LoopTree* loop_tree =
-      new (graph->zone()) LoopTree(graph->NodeCount(), graph->zone());
-  LoopFinderImpl finder(graph, loop_tree, zone);
+      graph->zone()->New<LoopTree>(graph->NodeCount(), graph->zone());
+  LoopFinderImpl finder(graph, loop_tree, tick_counter, zone);
   finder.Run();
   if (FLAG_trace_turbo_loop) {
     finder.Print();
   }
   return loop_tree;
 }
-
 
 Node* LoopTree::HeaderNode(Loop* loop) {
   Node* first = *HeaderNodes(loop).begin();
