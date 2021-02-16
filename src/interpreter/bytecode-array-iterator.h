@@ -5,6 +5,8 @@
 #ifndef V8_INTERPRETER_BYTECODE_ARRAY_ITERATOR_H_
 #define V8_INTERPRETER_BYTECODE_ARRAY_ITERATOR_H_
 
+#include <memory>
+
 #include "src/interpreter/bytecode-array-accessor.h"
 
 namespace v8 {
@@ -14,13 +16,15 @@ namespace interpreter {
 class V8_EXPORT_PRIVATE BytecodeArrayIterator final
     : public BytecodeArrayAccessor {
  public:
-  explicit BytecodeArrayIterator(Handle<BytecodeArray> bytecode_array);
+  explicit BytecodeArrayIterator(std::unique_ptr<AbstractBytecodeArray> array);
+
+  explicit BytecodeArrayIterator(Handle<BytecodeArray> array);
+
+  BytecodeArrayIterator(const BytecodeArrayIterator&) = delete;
+  BytecodeArrayIterator& operator=(const BytecodeArrayIterator&) = delete;
 
   void Advance();
   bool done() const;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(BytecodeArrayIterator);
 };
 
 }  // namespace interpreter
