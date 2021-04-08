@@ -5,7 +5,8 @@
 #ifndef V8_OBJECTS_JS_REGEXP_STRING_ITERATOR_H_
 #define V8_OBJECTS_JS_REGEXP_STRING_ITERATOR_H_
 
-#include "src/objects.h"
+#include "src/objects/js-objects.h"
+#include "torque-generated/bit-fields.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -13,16 +14,12 @@
 namespace v8 {
 namespace internal {
 
-class JSRegExpStringIterator : public JSObject {
+#include "torque-generated/src/objects/js-regexp-string-iterator-tq.inc"
+
+class JSRegExpStringIterator
+    : public TorqueGeneratedJSRegExpStringIterator<JSRegExpStringIterator,
+                                                   JSObject> {
  public:
-  // [regexp]: the [[IteratingRegExp]] internal property.
-  DECL_ACCESSORS(iterating_regexp, Object)
-
-  // [string]: The [[IteratedString]] internal property.
-  DECL_ACCESSORS(iterating_string, String)
-
-  DECL_INT_ACCESSORS(flags)
-
   // [boolean]: The [[Done]] internal property.
   DECL_BOOLEAN_ACCESSORS(done)
 
@@ -32,23 +29,11 @@ class JSRegExpStringIterator : public JSObject {
   // [boolean]: The [[Unicode]] internal property.
   DECL_BOOLEAN_ACCESSORS(unicode)
 
-  DECL_CAST(JSRegExpStringIterator)
   DECL_PRINTER(JSRegExpStringIterator)
-  DECL_VERIFIER(JSRegExpStringIterator)
 
-  static const int kIteratingRegExpOffset = JSObject::kHeaderSize;
-  static const int kIteratedStringOffset =
-      kIteratingRegExpOffset + kPointerSize;
-  static const int kFlagsOffset = kIteratedStringOffset + kPointerSize;
+  DEFINE_TORQUE_GENERATED_JS_REG_EXP_STRING_ITERATOR_FLAGS()
 
-  static const int kSize = kFlagsOffset + kPointerSize;
-
-  static const int kDoneBit = 0;
-  static const int kGlobalBit = 1;
-  static const int kUnicodeBit = 2;
-
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(JSRegExpStringIterator);
+  TQ_OBJECT_CONSTRUCTORS(JSRegExpStringIterator)
 };
 
 }  // namespace internal

@@ -6,7 +6,7 @@
 #define V8_INTERPRETER_BYTECODE_REGISTER_OPTIMIZER_H_
 
 #include "src/base/compiler-specific.h"
-#include "src/globals.h"
+#include "src/common/globals.h"
 #include "src/interpreter/bytecode-register-allocator.h"
 
 namespace v8 {
@@ -23,23 +23,25 @@ class V8_EXPORT_PRIVATE BytecodeRegisterOptimizer final
  public:
   class BytecodeWriter {
    public:
-    BytecodeWriter() {}
-    virtual ~BytecodeWriter() {}
+    BytecodeWriter() = default;
+    virtual ~BytecodeWriter() = default;
+    BytecodeWriter(const BytecodeWriter&) = delete;
+    BytecodeWriter& operator=(const BytecodeWriter&) = delete;
 
     // Called to emit a register transfer bytecode.
     virtual void EmitLdar(Register input) = 0;
     virtual void EmitStar(Register output) = 0;
     virtual void EmitMov(Register input, Register output) = 0;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(BytecodeWriter);
   };
 
   BytecodeRegisterOptimizer(Zone* zone,
                             BytecodeRegisterAllocator* register_allocator,
                             int fixed_registers_count, int parameter_count,
                             BytecodeWriter* bytecode_writer);
-  virtual ~BytecodeRegisterOptimizer() {}
+  ~BytecodeRegisterOptimizer() override = default;
+  BytecodeRegisterOptimizer(const BytecodeRegisterOptimizer&) = delete;
+  BytecodeRegisterOptimizer& operator=(const BytecodeRegisterOptimizer&) =
+      delete;
 
   // Perform explicit register transfer operations.
   void DoLdar(Register input) {
@@ -60,6 +62,7 @@ class V8_EXPORT_PRIVATE BytecodeRegisterOptimizer final
 
   // Materialize all live registers and flush equivalence sets.
   void Flush();
+  bool EnsureAllRegistersAreFlushed() const;
 
   // Prepares for |bytecode|.
   template <Bytecode bytecode, AccumulatorUse accumulator_use>
@@ -132,8 +135,6 @@ class V8_EXPORT_PRIVATE BytecodeRegisterOptimizer final
                            RegisterInfo* non_set_member);
 
   void PushToRegistersNeedingFlush(RegisterInfo* reg);
-  bool EnsureAllRegistersAreFlushed() const;
-
   // Methods for finding and creating metadata for each register.
   RegisterInfo* GetRegisterInfo(Register reg) {
     size_t index = GetRegisterInfoTableIndex(reg);
@@ -202,8 +203,6 @@ class V8_EXPORT_PRIVATE BytecodeRegisterOptimizer final
   BytecodeWriter* bytecode_writer_;
   bool flush_required_;
   Zone* zone_;
-
-  DISALLOW_COPY_AND_ASSIGN(BytecodeRegisterOptimizer);
 };
 
 }  // namespace interpreter

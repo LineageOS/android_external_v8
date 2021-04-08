@@ -9,69 +9,66 @@
 #ifndef V8_OBJECTS_JS_LOCALE_H_
 #define V8_OBJECTS_JS_LOCALE_H_
 
-#include "src/global-handles.h"
+#include "src/execution/isolate.h"
+#include "src/handles/global-handles.h"
 #include "src/heap/factory.h"
-#include "src/isolate.h"
-#include "src/objects.h"
-#include "unicode/unistr.h"
+#include "src/objects/managed.h"
+#include "src/objects/objects.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
 
+namespace U_ICU_NAMESPACE {
+class Locale;
+}  // namespace U_ICU_NAMESPACE
+
 namespace v8 {
 namespace internal {
 
-class JSLocale : public JSObject {
+#include "torque-generated/src/objects/js-locale-tq.inc"
+
+class JSLocale : public TorqueGeneratedJSLocale<JSLocale, JSObject> {
  public:
-  // Initializes locale object with properties derived from input locale string
+  // Creates locale object with properties derived from input locale string
   // and options.
-  static MaybeHandle<JSLocale> InitializeLocale(Isolate* isolate,
-                                                Handle<JSLocale> locale_holder,
-                                                Handle<String> locale,
-                                                Handle<JSReceiver> options);
-  static Handle<String> Maximize(Isolate* isolate, String* locale);
-  static Handle<String> Minimize(Isolate* isolate, String* locale);
+  static MaybeHandle<JSLocale> New(Isolate* isolate, Handle<Map> map,
+                                   Handle<String> locale,
+                                   Handle<JSReceiver> options);
 
-  DECL_CAST(JSLocale)
+  static MaybeHandle<JSLocale> Maximize(Isolate* isolate,
+                                        Handle<JSLocale> locale);
+  static MaybeHandle<JSLocale> Minimize(Isolate* isolate,
+                                        Handle<JSLocale> locale);
 
-  // Locale accessors.
-  DECL_ACCESSORS(language, Object)
-  DECL_ACCESSORS(script, Object)
-  DECL_ACCESSORS(region, Object)
-  DECL_ACCESSORS(base_name, Object)
-  DECL_ACCESSORS(locale, String)
+  static Handle<Object> Language(Isolate* isolate, Handle<JSLocale> locale);
+  static Handle<Object> Script(Isolate* isolate, Handle<JSLocale> locale);
+  static Handle<Object> Region(Isolate* isolate, Handle<JSLocale> locale);
+  static Handle<String> BaseName(Isolate* isolate, Handle<JSLocale> locale);
+  static Handle<Object> Calendar(Isolate* isolate, Handle<JSLocale> locale);
+  static Handle<Object> CaseFirst(Isolate* isolate, Handle<JSLocale> locale);
+  static Handle<Object> Collation(Isolate* isolate, Handle<JSLocale> locale);
+  static Handle<Object> HourCycle(Isolate* isolate, Handle<JSLocale> locale);
+  static Handle<Object> Numeric(Isolate* isolate, Handle<JSLocale> locale);
+  static Handle<Object> NumberingSystem(Isolate* isolate,
+                                        Handle<JSLocale> locale);
+  static Handle<String> ToString(Isolate* isolate, Handle<JSLocale> locale);
+  static std::string ToString(Handle<JSLocale> locale);
 
-  // Unicode extension accessors.
-  DECL_ACCESSORS(calendar, Object)
-  DECL_ACCESSORS(case_first, Object)
-  DECL_ACCESSORS(collation, Object)
-  DECL_ACCESSORS(hour_cycle, Object)
-  DECL_ACCESSORS(numeric, Object)
-  DECL_ACCESSORS(numbering_system, Object)
+  // Help function to validate locale by other Intl objects.
+  static bool StartsWithUnicodeLanguageId(const std::string& value);
+
+  // Help function to check well-formed
+  // "(3*8alphanum) *("-" (3*8alphanum)) sequence" sequence
+  static bool Is38AlphaNumList(const std::string& value);
+
+  // Help function to check well-formed "3alpha"
+  static bool Is3Alpha(const std::string& value);
+
+  DECL_ACCESSORS(icu_locale, Managed<icu::Locale>)
 
   DECL_PRINTER(JSLocale)
-  DECL_VERIFIER(JSLocale)
 
-  // Layout description.
-  static const int kJSLocaleOffset = JSObject::kHeaderSize;
-  // Locale fields.
-  static const int kLanguageOffset = kJSLocaleOffset + kPointerSize;
-  static const int kScriptOffset = kLanguageOffset + kPointerSize;
-  static const int kRegionOffset = kScriptOffset + kPointerSize;
-  static const int kBaseNameOffset = kRegionOffset + kPointerSize;
-  static const int kLocaleOffset = kBaseNameOffset + kPointerSize;
-  // Unicode extension fields.
-  static const int kCalendarOffset = kLocaleOffset + kPointerSize;
-  static const int kCaseFirstOffset = kCalendarOffset + kPointerSize;
-  static const int kCollationOffset = kCaseFirstOffset + kPointerSize;
-  static const int kHourCycleOffset = kCollationOffset + kPointerSize;
-  static const int kNumericOffset = kHourCycleOffset + kPointerSize;
-  static const int kNumberingSystemOffset = kNumericOffset + kPointerSize;
-  // Final size.
-  static const int kSize = kNumberingSystemOffset + kPointerSize;
-
- private:
-  DISALLOW_IMPLICIT_CONSTRUCTORS(JSLocale);
+  TQ_OBJECT_CONSTRUCTORS(JSLocale)
 };
 
 }  // namespace internal

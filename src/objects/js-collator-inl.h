@@ -9,8 +9,8 @@
 #ifndef V8_OBJECTS_JS_COLLATOR_INL_H_
 #define V8_OBJECTS_JS_COLLATOR_INL_H_
 
-#include "src/objects-inl.h"
 #include "src/objects/js-collator.h"
+#include "src/objects/objects-inl.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -18,22 +18,11 @@
 namespace v8 {
 namespace internal {
 
-ACCESSORS(JSCollator, icu_collator, Managed<icu::Collator>, kICUCollatorOffset)
-ACCESSORS(JSCollator, bound_compare, Object, kBoundCompareOffset);
-SMI_ACCESSORS(JSCollator, flags, kFlagsOffset)
+#include "torque-generated/src/objects/js-collator-tq-inl.inc"
 
-inline void JSCollator::set_usage(Usage usage) {
-  DCHECK_LT(usage, Usage::COUNT);
-  int hints = flags();
-  hints = UsageBits::update(hints, usage);
-  set_flags(hints);
-}
+TQ_OBJECT_CONSTRUCTORS_IMPL(JSCollator)
 
-inline JSCollator::Usage JSCollator::usage() const {
-  return UsageBits::decode(flags());
-}
-
-CAST_ACCESSOR(JSCollator);
+ACCESSORS(JSCollator, icu_collator, Managed<icu::Collator>, kIcuCollatorOffset)
 
 }  // namespace internal
 }  // namespace v8

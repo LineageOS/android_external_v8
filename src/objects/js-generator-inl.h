@@ -6,8 +6,9 @@
 #define V8_OBJECTS_JS_GENERATOR_INL_H_
 
 #include "src/objects/js-generator.h"
+#include "src/objects/js-promise-inl.h"
 
-#include "src/objects-inl.h"  // Needed for write barriers
+#include "src/objects/objects-inl.h"  // Needed for write barriers
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -15,17 +16,12 @@
 namespace v8 {
 namespace internal {
 
-CAST_ACCESSOR(JSGeneratorObject)
-CAST_ACCESSOR(JSAsyncGeneratorObject)
+#include "torque-generated/src/objects/js-generator-tq-inl.inc"
 
-ACCESSORS(JSGeneratorObject, function, JSFunction, kFunctionOffset)
-ACCESSORS(JSGeneratorObject, context, Context, kContextOffset)
-ACCESSORS(JSGeneratorObject, receiver, Object, kReceiverOffset)
-ACCESSORS(JSGeneratorObject, input_or_debug_pos, Object, kInputOrDebugPosOffset)
-SMI_ACCESSORS(JSGeneratorObject, resume_mode, kResumeModeOffset)
-SMI_ACCESSORS(JSGeneratorObject, continuation, kContinuationOffset)
-ACCESSORS(JSGeneratorObject, parameters_and_registers, FixedArray,
-          kParametersAndRegistersOffset)
+TQ_OBJECT_CONSTRUCTORS_IMPL(JSGeneratorObject)
+TQ_OBJECT_CONSTRUCTORS_IMPL(JSAsyncFunctionObject)
+TQ_OBJECT_CONSTRUCTORS_IMPL(JSAsyncGeneratorObject)
+TQ_OBJECT_CONSTRUCTORS_IMPL(AsyncGeneratorRequest)
 
 bool JSGeneratorObject::is_suspended() const {
   DCHECK_LT(kGeneratorExecuting, 0);
@@ -40,9 +36,6 @@ bool JSGeneratorObject::is_closed() const {
 bool JSGeneratorObject::is_executing() const {
   return continuation() == kGeneratorExecuting;
 }
-
-ACCESSORS(JSAsyncGeneratorObject, queue, HeapObject, kQueueOffset)
-SMI_ACCESSORS(JSAsyncGeneratorObject, is_awaiting, kIsAwaitingOffset)
 
 }  // namespace internal
 }  // namespace v8

@@ -9,6 +9,10 @@
 #include "src/base/lazy-instance.h"
 #include "src/base/platform/mutex.h"
 
+#if V8_OS_STARBOARD
+#include "starboard/common/condition_variable.h"
+#endif
+
 namespace v8 {
 namespace base {
 
@@ -32,6 +36,8 @@ class TimeDelta;
 class V8_BASE_EXPORT ConditionVariable final {
  public:
   ConditionVariable();
+  ConditionVariable(const ConditionVariable&) = delete;
+  ConditionVariable& operator=(const ConditionVariable&) = delete;
   ~ConditionVariable();
 
   // If any threads are waiting on this condition variable, calling
@@ -61,9 +67,11 @@ class V8_BASE_EXPORT ConditionVariable final {
 
   // The implementation-defined native handle type.
 #if V8_OS_POSIX
-  typedef pthread_cond_t NativeHandle;
+  using NativeHandle = pthread_cond_t;
 #elif V8_OS_WIN
-  typedef CONDITION_VARIABLE NativeHandle;
+  using NativeHandle = CONDITION_VARIABLE;
+#elif V8_OS_STARBOARD
+  using NativeHandle = SbConditionVariable;
 #endif
 
   NativeHandle& native_handle() {
@@ -75,10 +83,7 @@ class V8_BASE_EXPORT ConditionVariable final {
 
  private:
   NativeHandle native_handle_;
-
-  DISALLOW_COPY_AND_ASSIGN(ConditionVariable);
 };
-
 
 // POD ConditionVariable initialized lazily (i.e. the first time Pointer() is
 // called).
@@ -87,12 +92,13 @@ class V8_BASE_EXPORT ConditionVariable final {
 //       LAZY_CONDITION_VARIABLE_INITIALIZER;
 //
 //   void my_function() {
-//     LockGuard<Mutex> lock_guard(&my_mutex);
+//     MutexGuard lock_guard(&my_mutex);
 //     my_condvar.Pointer()->Wait(&my_mutex);
 //   }
-typedef LazyStaticInstance<
-    ConditionVariable, DefaultConstructTrait<ConditionVariable>,
-    ThreadSafeInitOnceTrait>::type LazyConditionVariable;
+using LazyConditionVariable =
+    LazyStaticInstance<ConditionVariable,
+                       DefaultConstructTrait<ConditionVariable>,
+                       ThreadSafeInitOnceTrait>::type;
 
 #define LAZY_CONDITION_VARIABLE_INITIALIZER LAZY_STATIC_INSTANCE_INITIALIZER
 
