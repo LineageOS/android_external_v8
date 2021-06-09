@@ -6,8 +6,8 @@
 #define V8_COMPILER_SIMPLIFIED_OPERATOR_REDUCER_H_
 
 #include "src/base/compiler-specific.h"
+#include "src/common/globals.h"
 #include "src/compiler/graph-reducer.h"
-#include "src/globals.h"
 
 namespace v8 {
 namespace internal {
@@ -27,8 +27,11 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorReducer final
     : public NON_EXPORTED_BASE(AdvancedReducer) {
  public:
   SimplifiedOperatorReducer(Editor* editor, JSGraph* jsgraph,
-                            JSHeapBroker* js_heap_broker);
+                            JSHeapBroker* broker);
   ~SimplifiedOperatorReducer() final;
+  SimplifiedOperatorReducer(const SimplifiedOperatorReducer&) = delete;
+  SimplifiedOperatorReducer& operator=(const SimplifiedOperatorReducer&) =
+      delete;
 
   const char* reducer_name() const override {
     return "SimplifiedOperatorReducer";
@@ -37,8 +40,6 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorReducer final
   Reduction Reduce(Node* node) final;
 
  private:
-  Reduction ReduceReferenceEqual(Node* node);
-
   Reduction Change(Node* node, const Operator* op, Node* a);
   Reduction ReplaceBoolean(bool value);
   Reduction ReplaceFloat64(double value);
@@ -51,17 +52,14 @@ class V8_EXPORT_PRIVATE SimplifiedOperatorReducer final
 
   Factory* factory() const;
   Graph* graph() const;
-  Isolate* isolate() const;
   MachineOperatorBuilder* machine() const;
   SimplifiedOperatorBuilder* simplified() const;
 
   JSGraph* jsgraph() const { return jsgraph_; }
-  JSHeapBroker* js_heap_broker() const { return js_heap_broker_; }
+  JSHeapBroker* broker() const { return broker_; }
 
   JSGraph* const jsgraph_;
-  JSHeapBroker* const js_heap_broker_;
-
-  DISALLOW_COPY_AND_ASSIGN(SimplifiedOperatorReducer);
+  JSHeapBroker* const broker_;
 };
 
 }  // namespace compiler

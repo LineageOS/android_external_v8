@@ -7,7 +7,9 @@
 
 #include <deque>
 #include <map>
+#include <memory>
 #include <set>
+
 #include "include/v8.h"
 #include "src/inspector/protocol/Console.h"
 #include "src/inspector/protocol/Forward.h"
@@ -120,6 +122,7 @@ class V8ConsoleMessageStorage {
   int count(int contextId, const String16& id);
   bool countReset(int contextId, const String16& id);
   void time(int contextId, const String16& id);
+  double timeLog(int contextId, const String16& id);
   double timeEnd(int contextId, const String16& id);
   bool hasTimer(int contextId, const String16& id);
 

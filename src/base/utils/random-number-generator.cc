@@ -23,14 +23,15 @@ static RandomNumberGenerator::EntropySource entropy_source = nullptr;
 
 // static
 void RandomNumberGenerator::SetEntropySource(EntropySource source) {
-  LockGuard<Mutex> lock_guard(entropy_mutex.Pointer());
+  MutexGuard lock_guard(entropy_mutex.Pointer());
   entropy_source = source;
 }
 
 
 RandomNumberGenerator::RandomNumberGenerator() {
   // Check if embedder supplied an entropy source.
-  { LockGuard<Mutex> lock_guard(entropy_mutex.Pointer());
+  {
+    MutexGuard lock_guard(entropy_mutex.Pointer());
     if (entropy_source != nullptr) {
       int64_t seed;
       if (entropy_source(reinterpret_cast<unsigned char*>(&seed),
@@ -50,6 +51,13 @@ RandomNumberGenerator::RandomNumberGenerator() {
   result = rand_s(&second_half);
   DCHECK_EQ(0, result);
   SetSeed((static_cast<int64_t>(first_half) << 32) + second_half);
+#elif V8_OS_MACOSX || V8_OS_FREEBSD || V8_OS_OPENBSD
+  // Despite its prefix suggests it is not RC4 algorithm anymore.
+  // It always succeeds while having decent performance and
+  // no file descriptor involved.
+  int64_t seed;
+  arc4random_buf(&seed, sizeof(seed));
+  SetSeed(seed);
 #else
   // Gather entropy from /dev/urandom if available.
   FILE* fp = fopen("/dev/urandom", "rb");
@@ -90,7 +98,7 @@ int RandomNumberGenerator::NextInt(int max) {
   while (true) {
     int rnd = Next(31);
     int val = rnd % max;
-    if (rnd - val + (max - 1) >= 0) {
+    if (std::numeric_limits<int>::max() - (rnd - val) >= (max - 1)) {
       return val;
     }
   }
@@ -99,7 +107,7 @@ int RandomNumberGenerator::NextInt(int max) {
 
 double RandomNumberGenerator::NextDouble() {
   XorShift128(&state0_, &state1_);
-  return ToDouble(state0_, state1_);
+  return ToDouble(state0_);
 }
 
 

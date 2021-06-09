@@ -8,7 +8,7 @@
 #include <array>
 
 #include "src/base/compiler-specific.h"
-#include "src/globals.h"
+#include "src/common/globals.h"
 #include "src/zone/zone-containers.h"
 #include "src/zone/zone.h"
 
@@ -25,16 +25,17 @@ class Operator;
 // Marks are used during traversal of the graph to distinguish states of nodes.
 // Each node has a mark which is a monotonically increasing integer, and a
 // {NodeMarker} has a range of values that indicate states of a node.
-typedef uint32_t Mark;
-
+using Mark = uint32_t;
 
 // NodeIds are identifying numbers for nodes that can be used to index auxiliary
 // out-of-line data associated with each node.
-typedef uint32_t NodeId;
+using NodeId = uint32_t;
 
 class V8_EXPORT_PRIVATE Graph final : public NON_EXPORTED_BASE(ZoneObject) {
  public:
   explicit Graph(Zone* zone);
+  Graph(const Graph&) = delete;
+  Graph& operator=(const Graph&) = delete;
 
   // Scope used when creating a subgraph for inlining. Automatically preserves
   // the original start and end nodes of the graph, and resets them when you
@@ -47,13 +48,13 @@ class V8_EXPORT_PRIVATE Graph final : public NON_EXPORTED_BASE(ZoneObject) {
       graph_->SetStart(start_);
       graph_->SetEnd(end_);
     }
+    SubgraphScope(const SubgraphScope&) = delete;
+    SubgraphScope& operator=(const SubgraphScope&) = delete;
 
    private:
     Graph* const graph_;
     Node* const start_;
     Node* const end_;
-
-    DISALLOW_COPY_AND_ASSIGN(SubgraphScope);
   };
 
   // Base implementation used by all factory methods.
@@ -65,9 +66,14 @@ class V8_EXPORT_PRIVATE Graph final : public NON_EXPORTED_BASE(ZoneObject) {
                 bool incomplete = false);
 
   // Factory template for nodes with static input counts.
-  template <typename... Nodes>
-  Node* NewNode(const Operator* op, Nodes*... nodes) {
-    std::array<Node*, sizeof...(nodes)> nodes_arr{{nodes...}};
+  // Note: Template magic below is used to ensure this method is only considered
+  // for argument types convertible to Node* during overload resoluation.
+  template <typename... Nodes,
+            typename = typename std::enable_if_t<
+                base::all(std::is_convertible<Nodes, Node*>::value...)>>
+  Node* NewNode(const Operator* op, Nodes... nodes) {
+    std::array<Node*, sizeof...(nodes)> nodes_arr{
+        {static_cast<Node*>(nodes)...}};
     return NewNode(op, nodes_arr.size(), nodes_arr.data());
   }
 
@@ -101,8 +107,6 @@ class V8_EXPORT_PRIVATE Graph final : public NON_EXPORTED_BASE(ZoneObject) {
   Mark mark_max_;
   NodeId next_node_id_;
   ZoneVector<GraphDecorator*> decorators_;
-
-  DISALLOW_COPY_AND_ASSIGN(Graph);
 };
 
 
@@ -110,7 +114,7 @@ class V8_EXPORT_PRIVATE Graph final : public NON_EXPORTED_BASE(ZoneObject) {
 // in a graph.
 class GraphDecorator : public ZoneObject {
  public:
-  virtual ~GraphDecorator() {}
+  virtual ~GraphDecorator() = default;
   virtual void Decorate(Node* node) = 0;
 };
 

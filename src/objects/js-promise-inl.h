@@ -7,8 +7,8 @@
 
 #include "src/objects/js-promise.h"
 
-#include "src/objects-inl.h"  // Needed for write barriers
-#include "src/objects.h"
+#include "src/objects/objects-inl.h"  // Needed for write barriers
+#include "src/objects/objects.h"
 
 // Has to be the last include (doesn't have include guards):
 #include "src/objects/object-macros.h"
@@ -16,19 +16,19 @@
 namespace v8 {
 namespace internal {
 
-CAST_ACCESSOR(JSPromise)
+#include "torque-generated/src/objects/js-promise-tq-inl.inc"
 
-ACCESSORS(JSPromise, reactions_or_result, Object, kReactionsOrResultOffset)
-SMI_ACCESSORS(JSPromise, flags, kFlagsOffset)
-BOOL_ACCESSORS(JSPromise, flags, has_handler, kHasHandlerBit)
-BOOL_ACCESSORS(JSPromise, flags, handled_hint, kHandledHintBit)
+TQ_OBJECT_CONSTRUCTORS_IMPL(JSPromise)
 
-Object* JSPromise::result() const {
+BOOL_ACCESSORS(JSPromise, flags, has_handler, HasHandlerBit::kShift)
+BOOL_ACCESSORS(JSPromise, flags, handled_hint, HandledHintBit::kShift)
+
+Object JSPromise::result() const {
   DCHECK_NE(Promise::kPending, status());
   return reactions_or_result();
 }
 
-Object* JSPromise::reactions() const {
+Object JSPromise::reactions() const {
   DCHECK_EQ(Promise::kPending, status());
   return reactions_or_result();
 }

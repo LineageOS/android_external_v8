@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "src/globals.h"
+#include "src/common/globals.h"
 #include "src/interpreter/bytecode-operands.h"
 
 // This interface and it's implementation are independent of the
@@ -98,6 +98,10 @@ namespace interpreter {
   /* Property loads (LoadIC) operations */                                     \
   V(LdaNamedProperty, AccumulatorUse::kWrite, OperandType::kReg,               \
     OperandType::kIdx, OperandType::kIdx)                                      \
+  V(LdaNamedPropertyNoFeedback, AccumulatorUse::kWrite, OperandType::kReg,     \
+    OperandType::kIdx)                                                         \
+  V(LdaNamedPropertyFromSuper, AccumulatorUse::kReadWrite, OperandType::kReg,  \
+    OperandType::kIdx, OperandType::kIdx)                                      \
   V(LdaKeyedProperty, AccumulatorUse::kReadWrite, OperandType::kReg,           \
     OperandType::kIdx)                                                         \
                                                                                \
@@ -110,6 +114,8 @@ namespace interpreter {
   /* Propery stores (StoreIC) operations */                                    \
   V(StaNamedProperty, AccumulatorUse::kReadWrite, OperandType::kReg,           \
     OperandType::kIdx, OperandType::kIdx)                                      \
+  V(StaNamedPropertyNoFeedback, AccumulatorUse::kReadWrite, OperandType::kReg, \
+    OperandType::kIdx, OperandType::kFlag8)                                    \
   V(StaNamedOwnProperty, AccumulatorUse::kReadWrite, OperandType::kReg,        \
     OperandType::kIdx, OperandType::kIdx)                                      \
   V(StaKeyedProperty, AccumulatorUse::kReadWrite, OperandType::kReg,           \
@@ -194,6 +200,8 @@ namespace interpreter {
     OperandType::kReg, OperandType::kIdx)                                      \
   V(CallUndefinedReceiver2, AccumulatorUse::kWrite, OperandType::kReg,         \
     OperandType::kReg, OperandType::kReg, OperandType::kIdx)                   \
+  V(CallNoFeedback, AccumulatorUse::kWrite, OperandType::kReg,                 \
+    OperandType::kRegList, OperandType::kRegCount)                             \
   V(CallWithSpread, AccumulatorUse::kWrite, OperandType::kReg,                 \
     OperandType::kRegList, OperandType::kRegCount, OperandType::kIdx)          \
   V(CallRuntime, AccumulatorUse::kWrite, OperandType::kRuntimeId,              \
@@ -229,7 +237,7 @@ namespace interpreter {
   V(TestReferenceEqual, AccumulatorUse::kReadWrite, OperandType::kReg)         \
   V(TestInstanceOf, AccumulatorUse::kReadWrite, OperandType::kReg,             \
     OperandType::kIdx)                                                         \
-  V(TestIn, AccumulatorUse::kReadWrite, OperandType::kReg)                     \
+  V(TestIn, AccumulatorUse::kReadWrite, OperandType::kReg, OperandType::kIdx)  \
   V(TestUndetectable, AccumulatorUse::kReadWrite)                              \
   V(TestNull, AccumulatorUse::kReadWrite)                                      \
   V(TestUndefined, AccumulatorUse::kReadWrite)                                 \
@@ -247,9 +255,10 @@ namespace interpreter {
     OperandType::kIdx, OperandType::kFlag8)                                    \
   V(CreateArrayLiteral, AccumulatorUse::kWrite, OperandType::kIdx,             \
     OperandType::kIdx, OperandType::kFlag8)                                    \
+  V(CreateArrayFromIterable, AccumulatorUse::kReadWrite)                       \
   V(CreateEmptyArrayLiteral, AccumulatorUse::kWrite, OperandType::kIdx)        \
-  V(CreateObjectLiteral, AccumulatorUse::kNone, OperandType::kIdx,             \
-    OperandType::kIdx, OperandType::kFlag8, OperandType::kRegOut)              \
+  V(CreateObjectLiteral, AccumulatorUse::kWrite, OperandType::kIdx,            \
+    OperandType::kIdx, OperandType::kFlag8)                                    \
   V(CreateEmptyObjectLiteral, AccumulatorUse::kWrite)                          \
   V(CloneObject, AccumulatorUse::kWrite, OperandType::kReg,                    \
     OperandType::kFlag8, OperandType::kIdx)                                    \
@@ -291,6 +300,7 @@ namespace interpreter {
   V(JumpIfNotNullConstant, AccumulatorUse::kRead, OperandType::kIdx)           \
   V(JumpIfUndefinedConstant, AccumulatorUse::kRead, OperandType::kIdx)         \
   V(JumpIfNotUndefinedConstant, AccumulatorUse::kRead, OperandType::kIdx)      \
+  V(JumpIfUndefinedOrNullConstant, AccumulatorUse::kRead, OperandType::kIdx)   \
   V(JumpIfTrueConstant, AccumulatorUse::kRead, OperandType::kIdx)              \
   V(JumpIfFalseConstant, AccumulatorUse::kRead, OperandType::kIdx)             \
   V(JumpIfJSReceiverConstant, AccumulatorUse::kRead, OperandType::kIdx)        \
@@ -308,6 +318,7 @@ namespace interpreter {
   V(JumpIfNotNull, AccumulatorUse::kRead, OperandType::kUImm)                  \
   V(JumpIfUndefined, AccumulatorUse::kRead, OperandType::kUImm)                \
   V(JumpIfNotUndefined, AccumulatorUse::kRead, OperandType::kUImm)             \
+  V(JumpIfUndefinedOrNull, AccumulatorUse::kRead, OperandType::kUImm)          \
   V(JumpIfJSReceiver, AccumulatorUse::kRead, OperandType::kUImm)               \
                                                                                \
   /* Smi-table lookup for switch statements */                                 \
@@ -324,9 +335,6 @@ namespace interpreter {
     OperandType::kRegPair, OperandType::kIdx)                                  \
   V(ForInStep, AccumulatorUse::kWrite, OperandType::kReg)                      \
                                                                                \
-  /* Perform a stack guard check */                                            \
-  V(StackCheck, AccumulatorUse::kNone)                                         \
-                                                                               \
   /* Update the pending message */                                             \
   V(SetPendingMessage, AccumulatorUse::kReadWrite)                             \
                                                                                \
@@ -337,6 +345,7 @@ namespace interpreter {
   V(ThrowReferenceErrorIfHole, AccumulatorUse::kRead, OperandType::kIdx)       \
   V(ThrowSuperNotCalledIfHole, AccumulatorUse::kRead)                          \
   V(ThrowSuperAlreadyCalledIfNotHole, AccumulatorUse::kRead)                   \
+  V(ThrowIfNotSuperConstructor, AccumulatorUse::kNone, OperandType::kReg)      \
                                                                                \
   /* Generators */                                                             \
   V(SwitchOnGeneratorState, AccumulatorUse::kNone, OperandType::kReg,          \
@@ -345,6 +354,10 @@ namespace interpreter {
     OperandType::kRegList, OperandType::kRegCount, OperandType::kUImm)         \
   V(ResumeGenerator, AccumulatorUse::kWrite, OperandType::kReg,                \
     OperandType::kRegOutList, OperandType::kRegCount)                          \
+                                                                               \
+  /* Iterator protocol operations */                                           \
+  V(GetIterator, AccumulatorUse::kWrite, OperandType::kReg, OperandType::kIdx, \
+    OperandType::kIdx)                                                         \
                                                                                \
   /* Debugger */                                                               \
   V(Debugger, AccumulatorUse::kNone)                                           \
@@ -400,7 +413,8 @@ namespace interpreter {
   V(JumpIfNotNull)                                      \
   V(JumpIfUndefined)                                    \
   V(JumpIfNotUndefined)                                 \
-  V(JumpIfJSReceiver)                                   \
+  V(JumpIfUndefinedOrNull)                              \
+  V(JumpIfJSReceiver)
 
 #define JUMP_CONDITIONAL_CONSTANT_BYTECODE_LIST(V)     \
   JUMP_TOBOOLEAN_CONDITIONAL_CONSTANT_BYTECODE_LIST(V) \
@@ -408,9 +422,10 @@ namespace interpreter {
   V(JumpIfNotNullConstant)                             \
   V(JumpIfUndefinedConstant)                           \
   V(JumpIfNotUndefinedConstant)                        \
+  V(JumpIfUndefinedOrNullConstant)                     \
   V(JumpIfTrueConstant)                                \
   V(JumpIfFalseConstant)                               \
-  V(JumpIfJSReceiverConstant)                          \
+  V(JumpIfJSReceiverConstant)
 
 #define JUMP_CONSTANT_BYTECODE_LIST(V)         \
   JUMP_UNCONDITIONAL_CONSTANT_BYTECODE_LIST(V) \
@@ -468,8 +483,10 @@ class V8_EXPORT_PRIVATE Bytecodes final : public AllStatic {
   // Returns string representation of |bytecode|.
   static const char* ToString(Bytecode bytecode);
 
-  // Returns string representation of |bytecode|.
-  static std::string ToString(Bytecode bytecode, OperandScale operand_scale);
+  // Returns string representation of |bytecode| combined with |operand_scale|
+  // using the optionally provided |separator|.
+  static std::string ToString(Bytecode bytecode, OperandScale operand_scale,
+                              const char* separator = ".");
 
   // Returns byte value of bytecode.
   static uint8_t ToByte(Bytecode bytecode) {
@@ -627,10 +644,11 @@ class V8_EXPORT_PRIVATE Bytecodes final : public AllStatic {
   }
 
   // Return true if |bytecode| is a jump without effects,
-  // e.g.  any jump excluding those that include type coercion like
-  // JumpIfTrueToBoolean.
+  // e.g. any jump excluding those that include type coercion like
+  // JumpIfTrueToBoolean, and JumpLoop due to having an implicit StackCheck.
   static constexpr bool IsJumpWithoutEffects(Bytecode bytecode) {
-    return IsJump(bytecode) && !IsJumpIfToBoolean(bytecode);
+    return IsJump(bytecode) && !IsJumpIfToBoolean(bytecode) &&
+           bytecode != Bytecode::kJumpLoop;
   }
 
   // Returns true if the bytecode is a switch.
@@ -664,6 +682,7 @@ class V8_EXPORT_PRIVATE Bytecodes final : public AllStatic {
            bytecode == Bytecode::kCallUndefinedReceiver0 ||
            bytecode == Bytecode::kCallUndefinedReceiver1 ||
            bytecode == Bytecode::kCallUndefinedReceiver2 ||
+           bytecode == Bytecode::kCallNoFeedback ||
            bytecode == Bytecode::kConstruct ||
            bytecode == Bytecode::kCallWithSpread ||
            bytecode == Bytecode::kConstructWithSpread ||
@@ -677,17 +696,20 @@ class V8_EXPORT_PRIVATE Bytecodes final : public AllStatic {
            bytecode == Bytecode::kInvokeIntrinsic;
   }
 
+  // Returns true if the bytecode is an one-shot bytecode.  One-shot bytecodes
+  // don`t collect feedback and are intended for code that runs only once and
+  // shouldn`t be optimized.
+  static constexpr bool IsOneShotBytecode(Bytecode bytecode) {
+    return bytecode == Bytecode::kCallNoFeedback ||
+           bytecode == Bytecode::kLdaNamedPropertyNoFeedback ||
+           bytecode == Bytecode::kStaNamedPropertyNoFeedback;
+  }
+
   // Returns true if the bytecode is a scaling prefix bytecode.
   static constexpr bool IsPrefixScalingBytecode(Bytecode bytecode) {
     return bytecode == Bytecode::kExtraWide || bytecode == Bytecode::kWide ||
            bytecode == Bytecode::kDebugBreakExtraWide ||
            bytecode == Bytecode::kDebugBreakWide;
-  }
-
-  // Returns true if the bytecode can be lazily deserialized.
-  static constexpr bool IsLazy(Bytecode bytecode) {
-    // Currently, all handlers are deserialized lazily.
-    return true;
   }
 
   // Returns true if the bytecode returns.
@@ -801,6 +823,7 @@ class V8_EXPORT_PRIVATE Bytecodes final : public AllStatic {
       case Bytecode::kCallJSRuntime:
         return ConvertReceiverMode::kNullOrUndefined;
       case Bytecode::kCallAnyReceiver:
+      case Bytecode::kCallNoFeedback:
       case Bytecode::kConstruct:
       case Bytecode::kCallWithSpread:
       case Bytecode::kConstructWithSpread:

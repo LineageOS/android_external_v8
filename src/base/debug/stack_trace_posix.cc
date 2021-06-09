@@ -61,7 +61,7 @@ char* itoa_r(intptr_t i, char* buf, size_t sz, int base, size_t padding);
 namespace {
 
 volatile sig_atomic_t in_signal_handler = 0;
-bool dump_stack_in_signal_handler = 1;
+bool dump_stack_in_signal_handler = true;
 
 // The prefix used for mangled symbols, per the Itanium C++ ABI:
 // http://www.codesourcery.com/cxx-abi/abi.html#mangling
@@ -104,7 +104,7 @@ void DemangleSymbols(std::string* text) {
     // Try to demangle the mangled symbol candidate.
     int status = 0;
     std::unique_ptr<char, FreeDeleter> demangled_symbol(
-        abi::__cxa_demangle(mangled_symbol.c_str(), nullptr, 0, &status));
+        abi::__cxa_demangle(mangled_symbol.c_str(), nullptr, nullptr, &status));
     if (status == 0) {  // Demangling is successful.
       // Remove the mangled symbol.
       text->erase(mangled_start, mangled_end - mangled_start);
@@ -125,7 +125,7 @@ class BacktraceOutputHandler {
   virtual void HandleOutput(const char* output) = 0;
 
  protected:
-  virtual ~BacktraceOutputHandler() {}
+  virtual ~BacktraceOutputHandler() = default;
 };
 
 #if HAVE_EXECINFO_H
@@ -266,28 +266,29 @@ void StackDumpSignalHandler(int signal, siginfo_t* info, void* void_context) {
 
 class PrintBacktraceOutputHandler : public BacktraceOutputHandler {
  public:
-  PrintBacktraceOutputHandler() {}
+  PrintBacktraceOutputHandler() = default;
+  PrintBacktraceOutputHandler(const PrintBacktraceOutputHandler&) = delete;
+  PrintBacktraceOutputHandler& operator=(const PrintBacktraceOutputHandler&) =
+      delete;
 
   void HandleOutput(const char* output) override {
     // NOTE: This code MUST be async-signal safe (it's used by in-process
     // stack dumping signal handler). NO malloc or stdio is allowed here.
     PrintToStderr(output);
   }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(PrintBacktraceOutputHandler);
 };
 
 class StreamBacktraceOutputHandler : public BacktraceOutputHandler {
  public:
   explicit StreamBacktraceOutputHandler(std::ostream* os) : os_(os) {}
+  StreamBacktraceOutputHandler(const StreamBacktraceOutputHandler&) = delete;
+  StreamBacktraceOutputHandler& operator=(const StreamBacktraceOutputHandler&) =
+      delete;
 
   void HandleOutput(const char* output) override { (*os_) << output; }
 
  private:
   std::ostream* os_;
-
-  DISALLOW_COPY_AND_ASSIGN(StreamBacktraceOutputHandler);
 };
 
 void WarmUpBacktrace() {
