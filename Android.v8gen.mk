@@ -44,28 +44,28 @@ $(GEN1): SCRIPT := $(generated_sources)/js2c.py
 $(GEN1): $(LOCAL_JS_LIBRARY_FILES) $(JS2C_PY)
 	@echo "Generating libraries.cc"
 	@mkdir -p $(dir $@)
-	python $(SCRIPT) $@ CORE $(LOCAL_JS_LIBRARY_FILES)
+	python2 $(SCRIPT) $@ CORE $(LOCAL_JS_LIBRARY_FILES)
 V8_GENERATED_LIBRARIES := $(generated_sources)/libraries.cc
 GEN2 := $(generated_sources)/experimental-libraries.cc
 $(GEN2): SCRIPT := $(generated_sources)/js2c.py
 $(GEN2): $(LOCAL_JS_EXPERIMENTAL_LIBRARY_FILES) $(JS2C_PY)
 	@echo "Generating experimental-libraries.cc"
 	@mkdir -p $(dir $@)
-	python $(SCRIPT) $@ EXPERIMENTAL $(LOCAL_JS_EXPERIMENTAL_LIBRARY_FILES)
+	python2 $(SCRIPT) $@ EXPERIMENTAL $(LOCAL_JS_EXPERIMENTAL_LIBRARY_FILES)
 V8_GENERATED_LIBRARIES += $(generated_sources)/experimental-libraries.cc
 GEN3 := $(generated_sources)/extra-libraries.cc
 $(GEN3): SCRIPT := $(generated_sources)/js2c.py
 $(GEN3): $(JS2C_PY)
 	@echo "Generating extra-libraries.cc"
 	@mkdir -p $(dir $@)
-	python $(SCRIPT) $@ EXTRAS
+	python2 $(SCRIPT) $@ EXTRAS
 V8_GENERATED_LIBRARIES += $(generated_sources)/extra-libraries.cc
 GEN4 := $(generated_sources)/experimental-extra-libraries.cc
 $(GEN4): SCRIPT := $(generated_sources)/js2c.py
 $(GEN4): $(JS2C_PY)
 	@echo "Generating experimental-extra-libraries.cc"
 	@mkdir -p $(dir $@)
-	python $(SCRIPT) $@ EXPERIMENTAL_EXTRAS
+	python2 $(SCRIPT) $@ EXPERIMENTAL_EXTRAS
 V8_GENERATED_LIBRARIES += $(generated_sources)/experimental-extra-libraries.cc
 LOCAL_GENERATED_SOURCES += $(V8_GENERATED_LIBRARIES)
 include $(BUILD_STATIC_LIBRARY)
